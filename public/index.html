@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>NPU MONITOR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Bebas+Neue&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="grid-bg"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo-mark"><span></span><span></span><span></span><span></span></div>
+    <div class="brand-text">
+      <div class="brand-title">NPU&thinsp;/&thinsp;MONITOR</div>
+      <div class="brand-sub">Ascend Cluster · Live Telemetry</div>
+    </div>
+  </div>
+  <div class="actions">
+    <div class="meta">
+      <div class="meta-label">NODES</div>
+      <div class="meta-value" id="meta-nodes">0</div>
+    </div>
+    <div class="meta">
+      <div class="meta-label">DIES</div>
+      <div class="meta-value" id="meta-dies">0</div>
+    </div>
+    <div class="meta">
+      <div class="meta-label">UPTIME</div>
+      <div class="meta-value" id="meta-uptime">00:00:00</div>
+    </div>
+    <button id="btn-add" class="primary">＋ ADD HOST</button>
+  </div>
+</header>
+
+<main id="grid" class="grid">
+  <div class="empty" id="empty">
+    <div class="empty-mark"></div>
+    <div class="empty-title">NO NODES REGISTERED</div>
+    <div class="empty-sub">Click <b>ADD HOST</b> in the top bar to begin monitoring.</div>
+  </div>
+  <div class="grid-col" data-col="0"></div>
+  <div class="grid-col" data-col="1"></div>
+  <div class="grid-col" data-col="2"></div>
+</main>
+
+<dialog id="dlg-host" class="dlg">
+  <form id="form-host" method="dialog">
+    <h2 id="dlg-title">Add Host</h2>
+    <input type="hidden" name="id" />
+    <label>Alias<input name="name" required placeholder="dev-box-1" /></label>
+    <div class="row">
+      <label class="grow">Host / IP<input name="host" required placeholder="10.0.0.5" /></label>
+      <label class="port">Port<input name="port" type="number" min="1" max="65535" value="22" /></label>
+    </div>
+    <label>Username<input name="username" required placeholder="root" /></label>
+    <div class="row">
+      <label>Command<input name="command" placeholder="npu-smi info" /></label>
+      <label class="port">Interval (ms)<input name="intervalMs" type="number" min="500" step="500" value="2000" /></label>
+    </div>
+    <fieldset class="auth">
+      <legend>Authentication</legend>
+      <label class="radio"><input type="radio" name="authType" value="password" checked /> Password</label>
+      <label class="radio"><input type="radio" name="authType" value="privateKey" /> Private Key</label>
+      <div class="auth-body" id="auth-password">
+        <label>Password<input name="password" type="password" autocomplete="new-password" /></label>
+      </div>
+      <div class="auth-body hidden" id="auth-key">
+        <label>Key Path<input name="privateKeyPath" placeholder="C:\Users\me\.ssh\id_rsa" /></label>
+        <label>Passphrase (optional)<input name="passphrase" type="password" /></label>
+      </div>
+    </fieldset>
+    <label class="check"><input type="checkbox" name="showRaw" /> Show raw command output (debug parser issues)</label>
+    <div class="dlg-actions">
+      <button type="button" id="btn-cancel">CANCEL</button>
+      <button type="button" id="btn-test" class="ghost">TEST</button>
+      <button type="submit" class="primary">SAVE</button>
+    </div>
+    <pre id="dlg-log" class="log hidden"></pre>
+  </form>
+</dialog>
+
+<template id="tpl-card">
+  <section class="card" data-host-id="">
+    <header class="card-head">
+      <button class="btn-collapse" title="Collapse / expand" aria-label="Collapse / expand"></button>
+      <div class="card-title">
+        <span class="dot"></span>
+        <div class="title-stack">
+          <h3 class="name"></h3>
+          <span class="addr"></span>
+        </div>
+      </div>
+      <div class="card-summary" aria-label="Host summary">
+        <div class="summary-vram">
+          <div class="summary-vram-label"><span class="summary-vram-pct">--</span> VRAM</div>
+          <div class="summary-vram-bar"><span class="summary-vram-fill"></span></div>
+        </div>
+      </div>
+      <div class="card-actions full-actions">
+        <button class="btn-toggle primary">START</button>
+        <button class="btn-test">TEST</button>
+        <button class="btn-edit">EDIT</button>
+        <button class="btn-del">DELETE</button>
+      </div>
+      <div class="compact-actions">
+        <button class="btn-test compact-test" title="Test" aria-label="Test">T</button>
+        <div class="menu-wrap">
+          <button class="btn-more" title="More actions" aria-label="More actions">···</button>
+          <div class="action-menu">
+            <button class="btn-toggle-menu">START</button>
+            <button class="btn-edit-menu">EDIT</button>
+            <button class="btn-del-menu">DELETE</button>
+          </div>
+        </div>
+      </div>
+    </header>
+    <div class="card-body">
+      <div class="card-status">IDLE</div>
+      <div class="parse-warn hidden">PARSE FAILED - raw output below</div>
+      <div class="npu-list"></div>
+      <pre class="raw hidden"></pre>
+    </div>
+  </section>
+</template>
+
+<script src="/app.js" type="module"></script>
+</body>
+</html>
