@@ -42,7 +42,7 @@ npm run app
 托盘右键菜单：
 
 - **NPU Monitor · ● Running · :8787** （状态行，只读）
-- **Open Dashboard** —— 打开浏览器到 `http://localhost:8787`
+- **Open Window** —— 打开内置 Electron 窗口，显示同一套前端瀑布流和拖拽界面
 - **Start Backend** / **Stop Backend** / **Restart Backend** —— 启停 HTTP 服务
 - **Quit** —— 退出整个应用
 

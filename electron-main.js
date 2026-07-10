@@ -1,11 +1,13 @@
 'use strict';
 
-const { app, Tray, Menu, shell, nativeImage, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
 const PORT = Number(process.env.PORT) || 8787;
+const DASHBOARD_URL = `http://localhost:${PORT}`;
 let tray = null;
+let mainWindow = null;
 let serverApi = null;
 let backendRunning = false;
 
@@ -40,18 +42,50 @@ async function restartBackend() {
   if (backendRunning) await stopBackend();
   await new Promise(r => setTimeout(r, 300));
   await startBackend();
+  if (mainWindow) mainWindow.loadURL(DASHBOARD_URL);
 }
 
-function openDashboard() {
+function createWindow() {
+  if (mainWindow) return mainWindow;
+  mainWindow = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    minWidth: 800,
+    minHeight: 500,
+    backgroundColor: '#0a0c0f',
+    title: 'NPU Monitor',
+    icon: getIcon(),
+    show: false,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  mainWindow.setMenuBarVisibility(false);
+  mainWindow.loadURL(DASHBOARD_URL);
+  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.on('close', (e) => {
+    if (!app.isQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
+  });
+  mainWindow.on('closed', () => { mainWindow = null; });
+  return mainWindow;
+}
+
+function showWindow() {
+  const win = createWindow();
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+async function openDashboard() {
   if (!backendRunning) {
-    dialog.showMessageBoxSync({
-      type: 'info',
-      title: 'NPU Monitor',
-      message: 'Backend is stopped. Start it first.',
-    });
-    return;
+    await startBackend();
   }
-  shell.openExternal(`http://localhost:${PORT}`);
+  showWindow();
 }
 
 function refreshMenu() {
@@ -60,7 +94,7 @@ function refreshMenu() {
   const menu = Menu.buildFromTemplate([
     { label: `NPU Monitor  (${status})`, enabled: false },
     { type: 'separator' },
-    { label: 'Open Dashboard', enabled: backendRunning, click: openDashboard },
+    { label: 'Open Window', enabled: true, click: openDashboard },
     { type: 'separator' },
     { label: 'Start Backend', enabled: !backendRunning, click: () => startBackend() },
     { label: 'Stop Backend', enabled: backendRunning, click: () => stopBackend() },
@@ -72,7 +106,7 @@ function refreshMenu() {
   tray.setToolTip(`NPU Monitor — ${status}`);
 }
 
-if (require.platform === 'win32') app.setAppUserModelId('com.local.npus-monitor');
+if (process.platform === 'win32') app.setAppUserModelId('com.local.npus-monitor');
 
 app.whenReady().then(async () => {
   if (process.platform === 'darwin' && app.dock) app.dock.hide();
@@ -80,9 +114,12 @@ app.whenReady().then(async () => {
   tray = new Tray(getIcon());
   tray.on('click', openDashboard);
   tray.on('double-click', openDashboard);
+  refreshMenu();
 
   await startBackend();
 });
+
+app.on('before-quit', () => { app.isQuitting = true; });
 
 app.on('window-all-closed', (e) => {
   if (e) e.preventDefault();
