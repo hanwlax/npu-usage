@@ -1,10 +1,11 @@
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, shell, nativeImage, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
 const PORT = Number(process.env.PORT) || 8787;
+const DASHBOARD_URL = `http://localhost:${PORT}`;
 let mainWindow = null;
 let tray = null;
 let serverApi = null;
@@ -41,14 +42,14 @@ async function restartBackend() {
   if (backendRunning) await stopBackend();
   await new Promise(r => setTimeout(r, 300));
   await startBackend();
+  if (mainWindow) mainWindow.loadURL(DASHBOARD_URL);
 }
 
 function showWindow() {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-  }
+  const win = createWindow();
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
 }
 
 function openDashboard() {
@@ -74,6 +75,7 @@ function refreshMenu() {
 }
 
 function createWindow() {
+  if (mainWindow) return mainWindow;
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -89,7 +91,7 @@ function createWindow() {
     },
   });
   mainWindow.setMenuBarVisibility(false);
-  mainWindow.loadURL(`http://localhost:${PORT}`);
+  mainWindow.loadURL(DASHBOARD_URL);
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.on('close', (e) => {
     if (!app.isQuitting) {
@@ -98,21 +100,22 @@ function createWindow() {
     }
   });
   mainWindow.on('closed', () => { mainWindow = null; });
+  return mainWindow;
 }
 
-if (require.platform === 'win32') app.setAppUserModelId('com.local.npus-monitor');
+if (process.platform === 'win32') app.setAppUserModelId('com.local.npus-monitor');
 
 app.whenReady().then(async () => {
   if (process.platform === 'darwin' && app.dock) app.dock.hide();
-
-  await startBackend();
-  createWindow();
-  refreshMenu();
 
   tray = new Tray(getIcon());
   tray.setToolTip('NPU Monitor');
   tray.on('click', openDashboard);
   tray.on('double-click', openDashboard);
+  refreshMenu();
+
+  await startBackend();
+  createWindow();
 });
 
 app.on('before-quit', () => { app.isQuitting = true; });

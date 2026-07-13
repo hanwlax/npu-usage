@@ -19,29 +19,81 @@ let hosts = [];
 let ws = null;
 let wsRetry = 0;
 const bootTime = Date.now();
+const HOST_ORDER_KEY = 'npu-host-order';
 let heightRaf = 0;
+let draggingCard = null;
 
 function scheduleRelayout() {
   scheduleBodyHeightUpdate();
 }
 
-function gridColumns() {
-  return Array.from(grid.querySelectorAll('.grid-col'));
+
+function readHostOrder() {
+  try {
+    const value = JSON.parse(localStorage.getItem(HOST_ORDER_KEY) || '[]');
+    return Array.isArray(value) ? value : [];
+  } catch (_) {
+    return [];
+  }
 }
 
-function columnForIndex(index) {
-  const cols = gridColumns();
-  return cols[index % cols.length] || grid;
-}
-
-function placeCardsInColumns() {
-  hosts.forEach((host, index) => {
-    const card = grid.querySelector(`[data-host-id="${host.id}"]`);
-    const col = columnForIndex(index);
-    if (card && col && card.parentElement !== col) col.appendChild(card);
+function applyHostOrder(list) {
+  const order = readHostOrder();
+  if (!order.length) return list;
+  const rank = new Map(order.map((id, index) => [id, index]));
+  return [...list].sort((a, b) => {
+    const ar = rank.has(a.id) ? rank.get(a.id) : Number.MAX_SAFE_INTEGER;
+    const br = rank.has(b.id) ? rank.get(b.id) : Number.MAX_SAFE_INTEGER;
+    if (ar !== br) return ar - br;
+    return list.indexOf(a) - list.indexOf(b);
   });
 }
 
+function saveHostOrderFromDom() {
+  const ids = $$('.card', grid).map(card => card.dataset.hostId).filter(Boolean);
+  try { localStorage.setItem(HOST_ORDER_KEY, JSON.stringify(ids)); } catch (_) {}
+}
+
+function isDragBlocked(target) {
+  return !!target.closest('button, input, textarea, select, a, dialog, .action-menu');
+}
+
+function handleCardDragStart(e) {
+  const card = e.currentTarget.closest('.card');
+  if (!card) return;
+  if (!e.target.closest('.card-head') || isDragBlocked(e.target)) {
+    e.preventDefault();
+    return;
+  }
+  draggingCard = card;
+  card.classList.add('dragging');
+  grid.classList.add('drag-active');
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', card.dataset.hostId || '');
+  }
+}
+
+function handleCardDragEnd(e) {
+  const card = e.currentTarget.closest('.card');
+  if (card) card.classList.remove('dragging');
+  if (draggingCard) draggingCard.classList.remove('dragging');
+  draggingCard = null;
+  grid.classList.remove('drag-active');
+  saveHostOrderFromDom();
+  scheduleBodyHeightUpdate();
+}
+
+function handleGridDragOver(e) {
+  if (!draggingCard) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  const target = e.target.closest('.card');
+  if (!target || target === draggingCard || !grid.contains(target)) return;
+  const rect = target.getBoundingClientRect();
+  const insertBefore = e.clientY < rect.top + rect.height / 2;
+  grid.insertBefore(draggingCard, insertBefore ? target : target.nextSibling);
+}
 function scheduleBodyHeightUpdate() {
   if (heightRaf) return;
   heightRaf = requestAnimationFrame(() => {
@@ -168,7 +220,13 @@ function renderCard(host) {
   if (!card) {
     card = tpl.content.firstElementChild.cloneNode(true);
     card.dataset.hostId = host.id;
-    columnForIndex(hosts.findIndex(h => h.id === host.id)).appendChild(card);
+    grid.appendChild(card);
+    const cardHead = card.querySelector('.card-head');
+    if (cardHead) {
+      cardHead.draggable = true;
+      cardHead.addEventListener('dragstart', handleCardDragStart);
+      cardHead.addEventListener('dragend', handleCardDragEnd);
+    }
 
     const toggle = () => toggleMonitor(host.id);
     const test = () => testHost(host.id);
@@ -182,6 +240,15 @@ function renderCard(host) {
     card.querySelector('.btn-edit-menu').addEventListener('click', edit);
     card.querySelector('.btn-del').addEventListener('click', del);
     card.querySelector('.btn-del-menu').addEventListener('click', del);
+    const menuWrap = card.querySelector('.menu-wrap');
+    const moreBtn = card.querySelector('.btn-more');
+    if (menuWrap && moreBtn) {
+      moreBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        menuWrap.classList.toggle('open');
+      });
+      card.querySelector('.action-menu').addEventListener('click', () => menuWrap.classList.remove('open'));
+    }
     card.querySelector('.btn-collapse').addEventListener('click', () => {
       const collapsed = !card.classList.contains('collapsed');
       setCardCollapsed(card, collapsed);
@@ -294,7 +361,7 @@ function updateMeta() {
 
 async function fetchHosts() {
   const res = await fetch('/api/hosts');
-  hosts = await res.json();
+  hosts = applyHostOrder(await res.json());
   const validIds = new Set(hosts.map(h => h.id));
   for (const card of $$('.card', grid)) {
     if (!validIds.has(card.dataset.hostId)) {
@@ -305,7 +372,6 @@ async function fetchHosts() {
     const card = renderCard(h);
     updateCardFromStatus(h, h.status || { running: false });
   }
-  placeCardsInColumns();
   setEmpty();
   updateMeta();
   subscribeAll();
@@ -413,6 +479,13 @@ function openDialog(host) {
   dlg.showModal();
 }
 
+document.addEventListener('click', () => {
+  $$('.menu-wrap.open').forEach(el => el.classList.remove('open'));
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') $$('.menu-wrap.open').forEach(el => el.classList.remove('open'));
+});
+
 $('#btn-add').addEventListener('click', () => openDialog(null));
 $('#btn-cancel').addEventListener('click', () => dlg.close());
 
@@ -493,10 +566,16 @@ function collectForm() {
   setInterval(updateMeta, 1000);
   setInterval(() => {
     fetch('/api/hosts').then(r => r.json()).then(list => {
-      hosts = list;
+      hosts = applyHostOrder(list);
       for (const h of hosts) updateCardFromStatus(h, h.status || { running: false });
       updateMeta();
     }).catch(() => {});
   }, 15000);
+  grid.addEventListener('dragover', handleGridDragOver);
+  grid.addEventListener('drop', (e) => {
+    if (!draggingCard) return;
+    e.preventDefault();
+    saveHostOrderFromDom();
+  });
   window.addEventListener('resize', scheduleBodyHeightUpdate);
 })();
