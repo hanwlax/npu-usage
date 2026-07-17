@@ -7,6 +7,9 @@ const tpl = $('#tpl-card');
 const metaNodes = $('#meta-nodes');
 const metaDies = $('#meta-dies');
 const metaUptime = $('#meta-uptime');
+const addHostButton = $('#btn-add');
+const proxyList = $('#proxy-list');
+const proxyRefreshButton = $('#btn-proxy-refresh');
 
 const dlg = $('#dlg-host');
 const form = $('#form-host');
@@ -16,6 +19,7 @@ const authPassword = $('#auth-password');
 const authKey = $('#auth-key');
 
 let hosts = [];
+let proxies = [];
 let ws = null;
 let wsRetry = 0;
 const bootTime = Date.now();
@@ -25,6 +29,25 @@ let draggingCard = null;
 
 function scheduleRelayout() {
   scheduleBodyHeightUpdate();
+}
+
+async function readJsonResponse(res, label) {
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    const text = await res.text();
+    const prefix = text.trim().slice(0, 80);
+    throw new Error(`${label} did not return JSON. Restart the backend/app so the new API routes are loaded. Response: ${prefix}`);
+  }
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || data.message || `${label} failed with HTTP ${res.status}`);
+  return data;
+}
+
+function setActiveTab(name) {
+  $$('.tab').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === name));
+  $$('.view').forEach(view => view.classList.toggle('active', view.id === `view-${name}`));
+  if (addHostButton) addHostButton.classList.toggle('hidden', name !== 'monitor');
+  if (name === 'proxy') fetchProxies();
 }
 
 
@@ -359,6 +382,100 @@ function updateMeta() {
   metaUptime.textContent = `${h}:${m}:${s}`;
 }
 
+function fmtTime(ts) {
+  if (!ts) return '--';
+  return new Date(ts).toLocaleString('zh-CN', { hour12: false });
+}
+
+function renderProxy(proxy) {
+  let card = proxyList.querySelector(`[data-proxy="${proxy.alias}"]`);
+  if (!card) {
+    card = document.createElement('section');
+    card.className = 'card proxy-card';
+    card.dataset.proxy = proxy.alias;
+    card.innerHTML = `
+      <header class="card-head proxy-card-head">
+        <div class="card-title proxy-title">
+          <span class="dot"></span>
+          <div class="title-stack">
+            <h3></h3>
+            <span class="addr proxy-addr"></span>
+          </div>
+        </div>
+        <div class="card-actions proxy-actions">
+          <button class="btn-proxy-start primary" type="button">START</button>
+          <button class="btn-proxy-stop" type="button">STOP</button>
+        </div>
+      </header>
+      <div class="card-status proxy-status"></div>
+      <div class="proxy-body">
+        <pre class="proxy-command"></pre>
+        <pre class="proxy-error"></pre>
+      </div>
+    `;
+    $('.btn-proxy-start', card).addEventListener('click', () => toggleProxy(proxy.alias, true));
+    $('.btn-proxy-stop', card).addEventListener('click', () => toggleProxy(proxy.alias, false));
+    proxyList.appendChild(card);
+  }
+
+  const running = !!proxy.running;
+  const hasError = !!proxy.lastError && !running;
+  card.classList.toggle('running', running);
+  card.classList.toggle('error', hasError);
+  const dot = $('.dot', card);
+  dot.classList.toggle('running', running);
+  dot.classList.toggle('error', hasError);
+  $('h3', card).textContent = proxy.alias;
+  $('.proxy-addr', card).textContent = proxy.command || `ssh -N ${proxy.alias}`;
+  $('.proxy-status', card).textContent = running
+    ? `LIVE · PID ${proxy.pid || '--'} · ${fmtTime(proxy.startedAt)}`
+    : `STOPPED · ${fmtTime(proxy.stoppedAt)}`;
+  $('.proxy-command', card).textContent = proxy.command || `ssh -N ${proxy.alias}`;
+  $('.proxy-error', card).textContent = proxy.lastError || '';
+  $('.btn-proxy-start', card).disabled = running;
+  $('.btn-proxy-stop', card).disabled = !running;
+}
+
+async function fetchProxies() {
+  if (!proxyList) return;
+  try {
+    const res = await fetch('/api/proxies');
+    proxies = await readJsonResponse(res, 'Proxy status');
+    const valid = new Set(proxies.map(p => p.alias));
+    for (const card of $$('.proxy-card', proxyList)) {
+      if (!valid.has(card.dataset.proxy)) card.remove();
+    }
+    for (const proxy of proxies) renderProxy(proxy);
+  } catch (err) {
+    proxyList.innerHTML = '';
+    const failed = document.createElement('div');
+    failed.className = 'empty';
+    const title = document.createElement('div');
+    title.className = 'empty-title';
+    title.textContent = 'PROXY STATUS FAILED';
+    const sub = document.createElement('div');
+    sub.className = 'empty-sub';
+    sub.textContent = err.message;
+    failed.append(title, sub);
+    proxyList.appendChild(failed);
+  }
+}
+
+async function toggleProxy(alias, start) {
+  const card = proxyList.querySelector(`[data-proxy="${alias}"]`);
+  const buttons = card ? $$('button', card) : [];
+  for (const btn of buttons) btn.disabled = true;
+  try {
+    const res = await fetch(`/api/proxies/${encodeURIComponent(alias)}/${start ? 'start' : 'stop'}`, { method: 'POST' });
+    const data = await readJsonResponse(res, 'Proxy request');
+    renderProxy(data);
+  } catch (err) {
+    alert('Proxy request failed: ' + err.message);
+  } finally {
+    await fetchProxies();
+  }
+}
+
 async function fetchHosts() {
   const res = await fetch('/api/hosts');
   hosts = applyHostOrder(await res.json());
@@ -486,7 +603,9 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') $$('.menu-wrap.open').forEach(el => el.classList.remove('open'));
 });
 
-$('#btn-add').addEventListener('click', () => openDialog(null));
+$$('.tab').forEach(btn => btn.addEventListener('click', () => setActiveTab(btn.dataset.tab)));
+if (proxyRefreshButton) proxyRefreshButton.addEventListener('click', fetchProxies);
+addHostButton.addEventListener('click', () => openDialog(null));
 $('#btn-cancel').addEventListener('click', () => dlg.close());
 
 $$('input[name="authType"]').forEach(r => {
@@ -562,6 +681,7 @@ function collectForm() {
 
 (async function init() {
   await fetchHosts();
+  await fetchProxies();
   connectWs();
   setInterval(updateMeta, 1000);
   setInterval(() => {
@@ -571,6 +691,9 @@ function collectForm() {
       updateMeta();
     }).catch(() => {});
   }, 15000);
+  setInterval(() => {
+    if ($('#view-proxy')?.classList.contains('active')) fetchProxies();
+  }, 5000);
   grid.addEventListener('dragover', handleGridDragOver);
   grid.addEventListener('drop', (e) => {
     if (!draggingCard) return;

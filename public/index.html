@@ -20,6 +20,10 @@
       <div class="brand-sub">Ascend Cluster · Live Telemetry</div>
     </div>
   </div>
+  <nav class="tabs" aria-label="Dashboard sections">
+    <button class="tab active" type="button" data-tab="monitor">MONITOR</button>
+    <button class="tab" type="button" data-tab="proxy">PROXY</button>
+  </nav>
   <div class="actions">
     <div class="meta">
       <div class="meta-label">NODES</div>
@@ -37,12 +41,29 @@
   </div>
 </header>
 
-<main id="grid" class="grid">
-  <div class="empty" id="empty">
-    <div class="empty-mark"></div>
-    <div class="empty-title">NO NODES REGISTERED</div>
-    <div class="empty-sub">Click <b>ADD HOST</b> in the top bar to begin monitoring.</div>
-  </div>
+<main>
+  <section id="view-monitor" class="view active">
+    <div id="grid" class="grid">
+      <div class="empty" id="empty">
+        <div class="empty-mark"></div>
+        <div class="empty-title">NO NODES REGISTERED</div>
+        <div class="empty-sub">Click <b>ADD HOST</b> in the top bar to begin monitoring.</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="view-proxy" class="view proxy-view">
+    <div class="proxy-panel">
+      <div class="proxy-head">
+        <div>
+          <h2>REVERSE PROXY</h2>
+          <p>SSH remote forward tunnels from local .ssh/config.</p>
+        </div>
+        <button id="btn-proxy-refresh" type="button">REFRESH</button>
+      </div>
+      <div id="proxy-list" class="proxy-list"></div>
+    </div>
+  </section>
 </main>
 
 <dialog id="dlg-host" class="dlg">

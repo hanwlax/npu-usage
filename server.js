@@ -6,6 +6,8 @@ const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const crypto = require('crypto');
+const os = require('os');
+const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { Client } = require('ssh2');
 const { parseNpuSmi } = require('./parser.js');
@@ -15,6 +17,7 @@ const HOSTS_FILE = process.env.HOSTS_FILE || path.join(DATA_DIR, 'hosts.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const PORT = Number(process.env.PORT) || 8787;
 const HISTORY_WINDOW_MS = 5 * 60 * 1000;
+const SSH_CONFIG_FILE = process.env.SSH_CONFIG_FILE || path.join(os.homedir(), '.ssh', 'config');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -34,6 +37,43 @@ async function saveHosts(hosts) {
   const tmp = HOSTS_FILE + '.tmp';
   await fsp.writeFile(tmp, JSON.stringify(hosts, null, 2), 'utf8');
   await fsp.rename(tmp, HOSTS_FILE);
+}
+
+function loadProxyHosts() {
+  let raw = '';
+  try {
+    raw = fs.readFileSync(SSH_CONFIG_FILE, 'utf8');
+  } catch (err) {
+    return [];
+  }
+
+  const lines = raw.split(/\r?\n/);
+  let inProxyBlock = false;
+  let sawProxyBlock = false;
+  const aliases = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^#\s*代理区\s*$/u.test(trimmed)) {
+      inProxyBlock = true;
+      sawProxyBlock = true;
+      continue;
+    }
+    if (/^#\s*代理区结束\s*$/u.test(trimmed)) {
+      inProxyBlock = false;
+      continue;
+    }
+    if (sawProxyBlock && !inProxyBlock) continue;
+    if (!sawProxyBlock || inProxyBlock) {
+      const match = trimmed.match(/^Host\s+(.+)$/i);
+      if (!match) continue;
+      for (const token of match[1].split(/\s+/)) {
+        if (/[*?]/.test(token)) continue;
+        if (!token.endsWith('-proxy')) continue;
+        if (!aliases.includes(token)) aliases.push(token);
+      }
+    }
+  }
+  return aliases;
 }
 
 function genId() {
@@ -182,6 +222,7 @@ app.use(express.static(PUBLIC_DIR));
 
 const sessions = new Map();
 let hosts = loadHosts();
+const proxySessions = new Map();
 
 function getOrCreateSession(host) {
   let s = sessions.get(host.id);
@@ -202,8 +243,115 @@ function removeSession(id) {
   }
 }
 
+function proxyStatus(alias) {
+  const s = proxySessions.get(alias);
+  if (!s) {
+    return {
+      alias,
+      command: `ssh -N ${alias}`,
+      running: false,
+      pid: null,
+      startedAt: null,
+      stoppedAt: null,
+      exitCode: null,
+      lastError: null,
+    };
+  }
+  return {
+    alias,
+    command: `ssh -N ${alias}`,
+    running: !!s.running,
+    pid: s.child?.pid || null,
+    startedAt: s.startedAt,
+    stoppedAt: s.stoppedAt,
+    exitCode: s.exitCode,
+    lastError: s.lastError,
+  };
+}
+
+function requireProxyAlias(alias, res) {
+  if (!loadProxyHosts().includes(alias)) {
+    res.status(404).json({ error: 'unknown proxy host' });
+    return null;
+  }
+  return alias;
+}
+
+function startProxy(alias) {
+  const cur = proxySessions.get(alias);
+  if (cur?.running && cur.child && !cur.child.killed) return proxyStatus(alias);
+
+  const session = {
+    child: null,
+    running: true,
+    startedAt: Date.now(),
+    stoppedAt: null,
+    exitCode: null,
+    lastError: null,
+  };
+  const child = spawn('ssh', ['-N', alias], {
+    cwd: __dirname,
+    windowsHide: true,
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  session.child = child;
+  proxySessions.set(alias, session);
+
+  child.stderr.on('data', (data) => {
+    const text = data.toString('utf8').trim();
+    if (text) session.lastError = text.slice(-800);
+  });
+  child.on('error', (err) => {
+    session.running = false;
+    session.stoppedAt = Date.now();
+    session.lastError = err.message || String(err);
+  });
+  child.on('exit', (code, signal) => {
+    session.running = false;
+    session.stoppedAt = Date.now();
+    session.exitCode = code;
+    if (signal && !session.lastError) session.lastError = `terminated by ${signal}`;
+    if (code && !session.lastError) session.lastError = `ssh exited with code ${code}`;
+  });
+
+  return proxyStatus(alias);
+}
+
+function stopProxy(alias) {
+  const s = proxySessions.get(alias);
+  if (!s || !s.child || !s.running) return proxyStatus(alias);
+  s.running = false;
+  s.stoppedAt = Date.now();
+  try {
+    s.child.kill();
+  } catch (err) {
+    s.lastError = err.message || String(err);
+  }
+  return proxyStatus(alias);
+}
+
+function stopAllProxies() {
+  for (const alias of proxySessions.keys()) stopProxy(alias);
+}
+
 app.get('/api/hosts', (req, res) => {
   res.json(hosts.map(h => ({ ...sanitizeHost(h), status: sessions.get(h.id)?.status() || { running: false } })));
+});
+
+app.get('/api/proxies', (req, res) => {
+  res.json(loadProxyHosts().map(proxyStatus));
+});
+
+app.post('/api/proxies/:alias/start', (req, res) => {
+  const alias = requireProxyAlias(req.params.alias, res);
+  if (!alias) return;
+  res.json(startProxy(alias));
+});
+
+app.post('/api/proxies/:alias/stop', (req, res) => {
+  const alias = requireProxyAlias(req.params.alias, res);
+  if (!alias) return;
+  res.json(stopProxy(alias));
 });
 
 app.post('/api/hosts', async (req, res) => {
@@ -397,6 +545,10 @@ wss.on('connection', (ws) => {
   });
 });
 
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'api route not found' });
+});
+
 setInterval(() => {
   wss.clients.forEach((ws) => {
     if (!ws.isAlive) return ws.terminate();
@@ -417,6 +569,7 @@ function startBackend() {
 }
 
 function stopBackend() {
+  stopAllProxies();
   if (!httpServer) return Promise.resolve();
   return new Promise(resolve => {
     httpServer.close(() => { httpServer = null; resolve(); });
@@ -427,4 +580,4 @@ if (require.main === module) {
   startBackend();
 }
 
-module.exports = { sessions, hosts, app, startBackend, stopBackend, get server() { return httpServer; } };
+module.exports = { sessions, proxySessions, hosts, app, startBackend, stopBackend, get server() { return httpServer; } };

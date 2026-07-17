@@ -105,6 +105,28 @@ html, body {
   letter-spacing: 0.18em;
 }
 
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-left: 14px;
+  margin-right: auto;
+  padding-left: 18px;
+  border-left: 1px solid var(--border);
+}
+.tab {
+  align-self: center;
+  height: 36px;
+  min-width: 96px;
+  border-left-width: 0;
+}
+.tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 700;
+}
+
 .actions {
   display: flex;
   align-items: stretch;
@@ -161,6 +183,120 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .topbar button.primary {
   align-self: center;
   height: 36px;
+}
+
+.view {
+  display: none;
+}
+.view.active {
+  display: block;
+}
+
+/* ====== Proxy ====== */
+.proxy-view {
+  position: relative;
+  z-index: 1;
+  padding: 0;
+}
+.proxy-panel {
+  background: transparent;
+}
+.proxy-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  margin: 24px 24px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+.proxy-head h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 22px;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+.proxy-head p {
+  margin: 4px 0 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.proxy-list {
+  position: relative;
+  z-index: 1;
+  display: block;
+  column-count: 3;
+  column-gap: 16px;
+  padding: 16px 24px 24px;
+}
+.proxy-card {
+  display: inline-block;
+  width: 100% !important;
+  min-width: 0;
+  margin: 0 0 16px;
+  break-inside: avoid;
+  page-break-inside: avoid;
+  vertical-align: top;
+}
+.proxy-card-head {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 58px;
+}
+.proxy-title {
+  min-width: 0;
+}
+.proxy-title h3 {
+  margin: 0;
+}
+.proxy-addr {
+  text-transform: none;
+}
+.proxy-body {
+  padding: 1px;
+  background: var(--border);
+}
+.proxy-status {
+  max-height: none;
+}
+.proxy-card.running .proxy-status { color: var(--ok); }
+.proxy-card.error .proxy-status { color: var(--err); }
+.proxy-command,
+.proxy-error {
+  margin: 0;
+  padding: 10px 12px;
+  background: #06080b;
+  border: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.proxy-error {
+  display: none;
+  border-top: 1px solid rgba(255, 90, 77, 0.35);
+  color: var(--err);
+  background: rgba(255, 90, 77, 0.08);
+}
+.proxy-card.error .proxy-error {
+  display: block;
+}
+.proxy-actions {
+  margin-top: 0;
+}
+.proxy-actions button {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 10px;
+}
+.proxy-actions .btn-proxy-stop:hover {
+  background: var(--err);
+  color: var(--bg);
+  border-color: var(--err);
 }
 
 /* ====== Grid ====== */
@@ -656,12 +792,20 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* ====== Responsive ====== */
 @media (max-width: 720px) {
   .topbar { height: auto; padding: 12px 14px; flex-direction: column; gap: 12px; }
+  .tabs { width: 100%; margin-left: 0; margin-right: 0; padding-left: 0; border-left: 0; }
+  .tab { flex: 1; }
   .actions { flex-wrap: wrap; }
   .meta { padding-left: 0; border-left: none; }
   .grid { grid-template-columns: 1fr; padding: 12px; gap: 12px; }
   .npu-list { grid-template-columns: repeat(2, 1fr); }
   .card-head { grid-template-columns: auto 1fr auto; }
   .card-meta { display: none; }
+}
+
+@media (max-width: 1500px) {
+  .proxy-list {
+    column-count: 2;
+  }
 }
 
 /* ====== Fixed grid layout + compact telemetry summary ====== */
@@ -840,6 +984,25 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   text-align: left;
   padding: 0 10px;
   background: transparent;
+}
+.action-menu button.primary {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+  font-weight: 700;
+}
+.action-menu button.primary:hover {
+  background: #ffb84a;
+  color: var(--bg);
+}
+.action-menu button.ghost {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--border);
+}
+.action-menu button.ghost:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 .action-menu button:last-child {
   border-bottom: 0;
@@ -1032,6 +1195,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
     column-count: 1;
     padding: 12px;
   }
+  .proxy-head { margin: 12px 12px 0; align-items: stretch; flex-direction: column; }
+  .proxy-list { column-count: 1; padding: 12px; }
 }
 
 /* Drag sorting affordance. */
