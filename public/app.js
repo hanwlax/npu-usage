@@ -10,6 +10,7 @@ const metaUptime = $('#meta-uptime');
 const addHostButton = $('#btn-add');
 const proxyList = $('#proxy-list');
 const proxyRefreshButton = $('#btn-proxy-refresh');
+const proxyStartAllButton = $('#btn-proxy-start-all');
 
 const dlg = $('#dlg-host');
 const form = $('#form-host');
@@ -26,6 +27,7 @@ const bootTime = Date.now();
 const HOST_ORDER_KEY = 'npu-host-order';
 let heightRaf = 0;
 let draggingCard = null;
+let proxyLayoutRaf = 0;
 
 function scheduleRelayout() {
   scheduleBodyHeightUpdate();
@@ -387,9 +389,61 @@ function fmtTime(ts) {
   return new Date(ts).toLocaleString('zh-CN', { hour12: false });
 }
 
+function proxyColumnCount() {
+  if (!proxyList) return 1;
+  const width = proxyList.clientWidth || 0;
+  if (width < 560) return 1;
+  return Math.max(2, Math.min(5, Math.floor(width / 360)));
+}
+
+function ensureProxyColumns(count) {
+  proxyList.style.setProperty('--proxy-columns', String(count));
+  const cols = $$('.proxy-masonry-col', proxyList);
+  if (cols.length === count) return cols;
+  const cards = $$('.proxy-card', proxyList);
+  proxyList.innerHTML = '';
+  for (let i = 0; i < count; i++) {
+    const col = document.createElement('div');
+    col.className = 'proxy-masonry-col';
+    proxyList.appendChild(col);
+  }
+  const nextCols = $$('.proxy-masonry-col', proxyList);
+  for (const card of cards) nextCols[0].appendChild(card);
+  return nextCols;
+}
+
+function layoutProxyMasonry() {
+  if (!proxyList) return;
+  const cards = $$('.proxy-card', proxyList);
+  if (!cards.length) return;
+  const cols = ensureProxyColumns(proxyColumnCount());
+  const ordered = cards.sort((a, b) => {
+    const ai = proxies.findIndex(p => p.alias === a.dataset.proxy);
+    const bi = proxies.findIndex(p => p.alias === b.dataset.proxy);
+    return ai - bi;
+  });
+  for (const col of cols) col.innerHTML = '';
+  for (const card of ordered) {
+    let target = cols[0];
+    for (const col of cols) {
+      if (col.scrollHeight < target.scrollHeight) target = col;
+    }
+    target.appendChild(card);
+  }
+}
+
+function scheduleProxyLayout() {
+  if (proxyLayoutRaf) return;
+  proxyLayoutRaf = requestAnimationFrame(() => {
+    proxyLayoutRaf = 0;
+    layoutProxyMasonry();
+  });
+}
+
 function renderProxy(proxy) {
   let card = proxyList.querySelector(`[data-proxy="${proxy.alias}"]`);
   if (!card) {
+    const cols = ensureProxyColumns(proxyColumnCount());
     card = document.createElement('section');
     card.className = 'card proxy-card';
     card.dataset.proxy = proxy.alias;
@@ -415,7 +469,7 @@ function renderProxy(proxy) {
     `;
     $('.btn-proxy-start', card).addEventListener('click', () => toggleProxy(proxy.alias, true));
     $('.btn-proxy-stop', card).addEventListener('click', () => toggleProxy(proxy.alias, false));
-    proxyList.appendChild(card);
+    cols[0].appendChild(card);
   }
 
   const running = !!proxy.running;
@@ -434,6 +488,7 @@ function renderProxy(proxy) {
   $('.proxy-error', card).textContent = proxy.lastError || '';
   $('.btn-proxy-start', card).disabled = running;
   $('.btn-proxy-stop', card).disabled = !running;
+  scheduleProxyLayout();
 }
 
 async function fetchProxies() {
@@ -446,6 +501,7 @@ async function fetchProxies() {
       if (!valid.has(card.dataset.proxy)) card.remove();
     }
     for (const proxy of proxies) renderProxy(proxy);
+    scheduleProxyLayout();
   } catch (err) {
     proxyList.innerHTML = '';
     const failed = document.createElement('div');
@@ -465,14 +521,56 @@ async function toggleProxy(alias, start) {
   const card = proxyList.querySelector(`[data-proxy="${alias}"]`);
   const buttons = card ? $$('button', card) : [];
   for (const btn of buttons) btn.disabled = true;
+  let updated = false;
   try {
     const res = await fetch(`/api/proxies/${encodeURIComponent(alias)}/${start ? 'start' : 'stop'}`, { method: 'POST' });
     const data = await readJsonResponse(res, 'Proxy request');
     renderProxy(data);
+    updated = true;
   } catch (err) {
     alert('Proxy request failed: ' + err.message);
   } finally {
+    if (!updated) {
+      for (const btn of buttons) btn.disabled = false;
+    }
+    scheduleProxyLayout();
+  }
+}
+
+async function startAllProxies() {
+  if (!proxyList || !proxyStartAllButton) return;
+  if (!proxies.length) await fetchProxies();
+  const targets = proxies.filter(proxy => !proxy.running);
+  if (!targets.length) return;
+
+  const originalText = proxyStartAllButton.textContent;
+  proxyStartAllButton.disabled = true;
+  if (proxyRefreshButton) proxyRefreshButton.disabled = true;
+  const failed = [];
+
+  try {
+    for (let i = 0; i < targets.length; i++) {
+      const proxy = targets[i];
+      proxyStartAllButton.textContent = `STARTING ${i + 1}/${targets.length}`;
+      const res = await fetch(`/api/proxies/${encodeURIComponent(proxy.alias)}/start`, { method: 'POST' });
+      try {
+        const data = await readJsonResponse(res, 'Proxy request');
+        renderProxy(data);
+        const index = proxies.findIndex(item => item.alias === data.alias);
+        if (index >= 0) proxies[index] = data;
+      } catch (err) {
+        failed.push(`${proxy.alias}: ${err.message}`);
+      }
+    }
+  } finally {
+    proxyStartAllButton.textContent = originalText;
+    proxyStartAllButton.disabled = false;
+    if (proxyRefreshButton) proxyRefreshButton.disabled = false;
     await fetchProxies();
+  }
+
+  if (failed.length) {
+    alert('Start all completed with failures:\n' + failed.join('\n'));
   }
 }
 
@@ -605,6 +703,7 @@ document.addEventListener('keydown', (e) => {
 
 $$('.tab').forEach(btn => btn.addEventListener('click', () => setActiveTab(btn.dataset.tab)));
 if (proxyRefreshButton) proxyRefreshButton.addEventListener('click', fetchProxies);
+if (proxyStartAllButton) proxyStartAllButton.addEventListener('click', startAllProxies);
 addHostButton.addEventListener('click', () => openDialog(null));
 $('#btn-cancel').addEventListener('click', () => dlg.close());
 
@@ -691,9 +790,6 @@ function collectForm() {
       updateMeta();
     }).catch(() => {});
   }, 15000);
-  setInterval(() => {
-    if ($('#view-proxy')?.classList.contains('active')) fetchProxies();
-  }, 5000);
   grid.addEventListener('dragover', handleGridDragOver);
   grid.addEventListener('drop', (e) => {
     if (!draggingCard) return;
@@ -701,4 +797,5 @@ function collectForm() {
     saveHostOrderFromDom();
   });
   window.addEventListener('resize', scheduleBodyHeightUpdate);
+  window.addEventListener('resize', scheduleProxyLayout);
 })();

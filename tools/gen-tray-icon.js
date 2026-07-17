@@ -30,32 +30,64 @@ function crc32(buf) {
 }
 
 const W = 32, H = 32;
+
+function paint(px, x, y, color) {
+  if (x < 0 || y < 0 || x >= W || y >= H) return;
+  const i = (y * W + x) * 4;
+  px[i] = color[0];
+  px[i + 1] = color[1];
+  px[i + 2] = color[2];
+  px[i + 3] = color[3];
+}
+
+function roundedRectContains(x, y, left, top, right, bottom, r) {
+  if (x < left || x > right || y < top || y > bottom) return false;
+  const cx = x < left + r ? left + r : x > right - r ? right - r : x;
+  const cy = y < top + r ? top + r : y > bottom - r ? bottom - r : y;
+  const dx = x - cx;
+  const dy = y - cy;
+  return dx * dx + dy * dy <= r * r;
+}
+
 // R, G, B, A per pixel
 function makePixels() {
   const px = Buffer.alloc(W * H * 4);
-  const bg = [0xf5, 0xa6, 0x23, 0xff];     // amber
-  const fg = [0x0a, 0x0c, 0x0f, 0xff];     // near-black
+  const bg = [0x18, 0x1c, 0x22, 0xff];     // dark card
+  const bgHi = [0x24, 0x27, 0x2f, 0xff];   // top sheen
+  const border = [0x3d, 0x42, 0x4b, 0xff];
+  const amber = [0xf5, 0x7e, 0x53, 0xff];
+  const cream = [0xf2, 0xed, 0xe6, 0xff];
+  const ok = [0x39, 0x73, 0x5f, 0xff];
+
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      const i = (y * W + x) * 4;
-      // Background
-      px[i] = bg[0]; px[i + 1] = bg[1]; px[i + 2] = bg[2]; px[i + 3] = bg[3];
-      // Letter N: vertical bars at x∈[10,14] and [22,26], diagonal between
-      const inLeft = x >= 10 && x <= 14;
-      const inRight = x >= 22 && x <= 26;
-      const inDiag = false;
-      if (inLeft && y >= 8 && y <= 26) { px[i] = fg[0]; px[i + 1] = fg[1]; px[i + 2] = fg[2]; }
-      if (inRight && y >= 8 && y <= 26) { px[i] = fg[0]; px[i + 1] = fg[1]; px[i + 2] = fg[2]; }
-      // diagonal from top-left of right bar to bottom-left of left bar
-      // y = 8 + (26-8) * (x-14)/(26-14) = 8 + 1.5*(x-14)
-      if (x >= 14 && x <= 26 && y >= 8 && y <= 26) {
-        const expectedY = 8 + 1.5 * (x - 14);
-        if (Math.abs(y - expectedY) < 1.6) {
-          px[i] = fg[0]; px[i + 1] = fg[1]; px[i + 2] = fg[2];
-        }
-      }
+      const onBorder = roundedRectContains(x, y, 2, 2, 29, 29, 7);
+      const onFill = roundedRectContains(x, y, 3, 3, 28, 28, 6);
+      if (onBorder) paint(px, x, y, border);
+      if (onFill) paint(px, x, y, y < 14 ? bgHi : bg);
     }
   }
+
+  for (let y = 8; y <= 23; y++) {
+    for (let x = 8; x <= 11; x++) paint(px, x, y, amber);
+    for (let x = 20; x <= 23; x++) paint(px, x, y, cream);
+  }
+
+  for (let x = 12; x <= 21; x++) {
+    const centerY = 8 + (x - 12) * 1.55;
+    for (let y = Math.floor(centerY - 2); y <= Math.ceil(centerY + 2); y++) {
+      if (y >= 8 && y <= 23 && Math.abs(y - centerY) <= 2.1) paint(px, x, y, amber);
+    }
+  }
+
+  for (let y = 22; y <= 27; y++) {
+    for (let x = 22; x <= 27; x++) {
+      const dx = x - 24.5;
+      const dy = y - 24.5;
+      if (dx * dx + dy * dy <= 8.5) paint(px, x, y, ok);
+    }
+  }
+
   return px;
 }
 
