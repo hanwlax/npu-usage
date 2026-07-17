@@ -28,9 +28,11 @@ const HOST_ORDER_KEY = 'npu-host-order';
 let heightRaf = 0;
 let draggingCard = null;
 let proxyLayoutRaf = 0;
+let monitorLayoutRaf = 0;
 
 function scheduleRelayout() {
   scheduleBodyHeightUpdate();
+  scheduleMonitorLayout();
 }
 
 async function readJsonResponse(res, label) {
@@ -75,7 +77,7 @@ function applyHostOrder(list) {
 }
 
 function saveHostOrderFromDom() {
-  const ids = $$('.card', grid).map(card => card.dataset.hostId).filter(Boolean);
+  const ids = monitorCardsInVisualOrder().map(card => card.dataset.hostId).filter(Boolean);
   try { localStorage.setItem(HOST_ORDER_KEY, JSON.stringify(ids)); } catch (_) {}
 }
 
@@ -106,7 +108,8 @@ function handleCardDragEnd(e) {
   draggingCard = null;
   grid.classList.remove('drag-active');
   saveHostOrderFromDom();
-  scheduleBodyHeightUpdate();
+  hosts = applyHostOrder(hosts);
+  scheduleRelayout();
 }
 
 function handleGridDragOver(e) {
@@ -117,7 +120,10 @@ function handleGridDragOver(e) {
   if (!target || target === draggingCard || !grid.contains(target)) return;
   const rect = target.getBoundingClientRect();
   const insertBefore = e.clientY < rect.top + rect.height / 2;
-  grid.insertBefore(draggingCard, insertBefore ? target : target.nextSibling);
+  const parent = target.parentElement && target.parentElement.classList.contains('grid-col')
+    ? target.parentElement
+    : grid;
+  parent.insertBefore(draggingCard, insertBefore ? target : target.nextSibling);
 }
 function scheduleBodyHeightUpdate() {
   if (heightRaf) return;
@@ -153,6 +159,74 @@ function setCardCollapsed(card, collapsed, immediate = false) {
     body.style.transition = '';
   }
 }
+
+function monitorColumnCount() {
+  const width = grid.clientWidth || window.innerWidth || 0;
+  if (width < 720) return 1;
+  if (width < 1500) return 2;
+  return 3;
+}
+
+function monitorCardsInVisualOrder() {
+  const cols = $$('.grid-col', grid);
+  if (!cols.length) return $$('.card[data-host-id]', grid);
+  const rows = Math.max(0, ...cols.map(col => col.children.length));
+  const cards = [];
+  for (let row = 0; row < rows; row++) {
+    for (const col of cols) {
+      const card = col.children[row];
+      if (card && card.classList.contains('card')) cards.push(card);
+    }
+  }
+  return cards;
+}
+
+function ensureMonitorColumns(count) {
+  grid.style.setProperty('--monitor-columns', String(count));
+  const existing = $$('.grid-col', grid);
+  if (existing.length === count) return existing;
+  const cards = monitorCardsInVisualOrder();
+  grid.innerHTML = '';
+  grid.appendChild(empty);
+  for (let i = 0; i < count; i++) {
+    const col = document.createElement('div');
+    col.className = 'grid-col';
+    grid.appendChild(col);
+  }
+  const cols = $$('.grid-col', grid);
+  for (const card of cards) cols[0].appendChild(card);
+  return cols;
+}
+
+function layoutMonitorColumns() {
+  if (!grid) return;
+  const cards = $$('.card[data-host-id]', grid);
+  const cols = ensureMonitorColumns(monitorColumnCount());
+  if (!cards.length) return;
+  const order = readHostOrder();
+  const rank = new Map(order.map((id, index) => [id, index]));
+  const sourceOrder = new Map(hosts.map((host, index) => [host.id, index]));
+  const ordered = cards.sort((a, b) => {
+    const ar = rank.has(a.dataset.hostId) ? rank.get(a.dataset.hostId) : Number.MAX_SAFE_INTEGER;
+    const br = rank.has(b.dataset.hostId) ? rank.get(b.dataset.hostId) : Number.MAX_SAFE_INTEGER;
+    if (ar !== br) return ar - br;
+    return (sourceOrder.get(a.dataset.hostId) ?? 0) - (sourceOrder.get(b.dataset.hostId) ?? 0);
+  });
+  for (const col of cols) col.innerHTML = '';
+  ordered.forEach((card, index) => {
+    cols[index % cols.length].appendChild(card);
+  });
+}
+
+function scheduleMonitorLayout() {
+  if (monitorLayoutRaf) return;
+  monitorLayoutRaf = requestAnimationFrame(() => {
+    monitorLayoutRaf = 0;
+    layoutMonitorColumns();
+    scheduleBodyHeightUpdate();
+  });
+}
+
 function fmtBytes(mb) {
   if (mb == null) return '-';
   if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
@@ -202,7 +276,7 @@ function buildTile(npu, idx) {
         <div class="tile-bar"><div class="tile-bar-fill"></div></div>
       </div>
     </div>
-    <div class="tile-vram"></div>
+    <div class="tile-metrics"><span class="tile-vram"></span><span class="tile-ai"></span></div>
   `;
   updateTile(tile, npu);
   return tile;
@@ -213,6 +287,7 @@ function updateTile(tile, npu) {
   barFill.style.width = (memPct != null ? Math.max(0, Math.min(100, memPct)) : 0) + '%';
   tile.querySelector('.tile-mem').textContent = `${fmtBytes(npu.memoryUsed)} / ${fmtBytes(npu.memoryTotal)}`;
   tile.querySelector('.tile-vram').textContent = memPct != null ? `${memPct.toFixed(0)}% VRAM` : '-- VRAM';
+  tile.querySelector('.tile-ai').textContent = npu.util != null ? `AICORE ${Number(npu.util).toFixed(0)}%` : 'AICORE --';
   tile.classList.remove('low', 'mid', 'high');
   const cls = metricClass(memPct);
   if (cls) tile.classList.add(cls);
@@ -457,8 +532,8 @@ function renderProxy(proxy) {
           </div>
         </div>
         <div class="card-actions proxy-actions">
-          <button class="btn-proxy-start primary" type="button">START</button>
-          <button class="btn-proxy-stop" type="button">STOP</button>
+          <button class="btn-proxy-start primary" type="button" title="Start" aria-label="Start proxy tunnel">S</button>
+          <button class="btn-proxy-stop" type="button" title="End" aria-label="End proxy tunnel">E</button>
         </div>
       </header>
       <div class="card-status proxy-status"></div>
@@ -590,7 +665,7 @@ async function fetchHosts() {
   setEmpty();
   updateMeta();
   subscribeAll();
-  scheduleBodyHeightUpdate();
+  scheduleRelayout();
 }
 
 function setEmpty() {
@@ -797,5 +872,6 @@ function collectForm() {
     saveHostOrderFromDom();
   });
   window.addEventListener('resize', scheduleBodyHeightUpdate);
+  window.addEventListener('resize', scheduleMonitorLayout);
   window.addEventListener('resize', scheduleProxyLayout);
 })();

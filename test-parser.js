@@ -115,6 +115,7 @@ eq('25.5.1: count', npus25.length, 5);
 eq('25.5.1: die 0 npuId', npus25[0] && npus25[0].npuId, '0');
 eq('25.5.1: die 0 die', npus25[0] && npus25[0].die, '0');
 eq('25.5.1: die 0 hbm', npus25[0] && npus25[0].hbmUsed, 46904);
+eq('25.5.1: die 0 aicore', npus25[0] && npus25[0].util, 0);
 eq('25.5.1: die 0 name', npus25[0] && npus25[0].name, 'Ascend910');
 eq('25.5.1: die 4 hbm', npus25[4] && npus25[4].hbmUsed, 3120);
 eq('25.5.1: no process table leak', !npus25.some(n => /Process/.test(n.name || '')), true);

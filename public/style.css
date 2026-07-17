@@ -302,11 +302,21 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .proxy-actions {
   margin-top: 0;
+  align-self: center;
+  display: flex;
+  gap: 10px;
+  justify-self: end;
 }
 .proxy-actions button {
-  height: 26px;
-  padding: 0 10px;
-  font-size: 10px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 .proxy-actions .btn-proxy-stop:hover {
   background: var(--err);
@@ -1160,23 +1170,35 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .tile-main {
   display: block;
 }
-.tile-vram {
+.tile-metrics {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.tile-vram,
+.tile-ai {
   color: var(--text-dim);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   font-variant-numeric: tabular-nums;
 }
-.npu-tile.mid .tile-vram { color: var(--warn); }
-.npu-tile.high .tile-vram { color: var(--err); }
+.npu-tile.mid .tile-vram,
+.npu-tile.mid .tile-ai { color: var(--warn); }
+.npu-tile.high .tile-vram,
+.npu-tile.high .tile-ai { color: var(--err); }
 
 /* Balanced multi-column host layout. */
 .grid,
 .grid.layout-grid,
 .grid.layout-masonry {
-  display: block;
-  column-count: 3;
-  column-gap: 16px;
+  display: grid;
+  grid-template-columns: repeat(var(--monitor-columns, 3), minmax(0, 1fr));
+  column-count: auto;
+  column-gap: normal;
+  gap: 16px;
   padding: 24px;
   min-height: 0;
 }
@@ -1185,29 +1207,36 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   position: relative;
   left: auto !important;
   top: auto !important;
-  display: inline-block;
+  display: block;
   width: 100% !important;
-  margin: 0 0 16px;
-  break-inside: avoid;
-  page-break-inside: avoid;
+  margin: 0;
+  break-inside: auto;
+  page-break-inside: auto;
   transition: border-color 0.15s, background 0.15s;
+}
+.grid-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
 }
 .empty {
   column-span: all;
+  grid-column: 1 / -1;
 }
 
 @media (max-width: 1500px) {
   .grid,
   .grid.layout-grid,
   .grid.layout-masonry {
-    column-count: 2;
+    grid-template-columns: repeat(var(--monitor-columns, 2), minmax(0, 1fr));
   }
 }
 @media (max-width: 720px) {
   .grid,
   .grid.layout-grid,
   .grid.layout-masonry {
-    column-count: 1;
+    grid-template-columns: repeat(var(--monitor-columns, 1), minmax(0, 1fr));
     padding: 12px;
   }
   .proxy-head { margin: 12px 12px 0; align-items: stretch; flex-direction: column; }
@@ -1456,6 +1485,7 @@ button.primary:hover,
 .proxy-card .proxy-card-head {
   grid-template-columns: minmax(0, 1fr) max-content;
   overflow: visible;
+  padding-right: 14px;
 }
 .proxy-card .proxy-title {
   min-width: 0;
@@ -1476,9 +1506,23 @@ button.primary:hover,
 }
 .proxy-card .proxy-actions {
   flex-shrink: 0;
+  gap: 10px;
   min-width: max-content;
   position: relative;
   z-index: 1;
+}
+.proxy-card .proxy-actions button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  border-left-width: 1px;
+  border-right-width: 1px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .btn-collapse,
@@ -1552,6 +1596,11 @@ button.primary:hover,
   margin-left: var(--proxy-gutter, 32px);
   margin-right: var(--proxy-gutter, 32px);
 }
+.proxy-panel {
+  background: transparent;
+  box-shadow: none;
+  border-color: transparent;
+}
 .proxy-head h2 {
   color: var(--text);
 }
@@ -1580,6 +1629,8 @@ button.primary:hover,
   break-inside: auto;
   page-break-inside: auto;
   min-width: 0;
+  background: rgba(29, 33, 40, 0.94);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
 }
 
 .action-menu {
