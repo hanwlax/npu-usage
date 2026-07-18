@@ -63,7 +63,10 @@ function parseTable(stdout) {
   const lines = stdout.split(/\r?\n/);
   const npuMap = new Map();
   let pendingName = null;
-  let isPhyIdFormat = /Phy-?Id/i.test(stdout);
+  let pendingSingleNpu = null;
+  let inProcessTable = false;
+  let isPhyIdFormat = /Phy-?ID/i.test(stdout);
+  let isSingleNpuIdFormat = /NPU\s+ID/i.test(stdout) && /Bus-Id/i.test(stdout) && !isPhyIdFormat;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -72,7 +75,11 @@ function parseTable(stdout) {
     if (!line.includes('|')) continue;
     if (/^\+[-\s=]+\+$/.test(trimmed)) continue;
     if (/^\|[\s=:]+(\s*\|)+$/.test(line)) continue;
-    if (/Process\s+(id|name|memory|usage)/i.test(line)) continue;
+    if (/Process\s+(id|name|memory|usage)/i.test(line)) {
+      inProcessTable = true;
+      continue;
+    }
+    if (inProcessTable) continue;
     if (/No running processes/i.test(line)) continue;
     if (/^\|\s*(NPU\s+Name|NPU\s+Chip|NPU\s+ID)/i.test(line)) continue;
 
@@ -82,7 +89,33 @@ function parseTable(stdout) {
     const col1Tokens = (cols[1] || '').split(/\s+/).filter(Boolean);
     const firstToken = col1Tokens[0] || '';
     const secondToken = col1Tokens[1] || '';
-    if (!/^\d+$/.test(firstToken)) continue;
+    if (!/^\d+$/.test(firstToken)) {
+      if (isSingleNpuIdFormat && pendingSingleNpu) {
+        const m = extractChipRow(cols);
+        const hbmHasData = m.hbmTotal != null && m.hbmTotal > 0;
+        npuMap.set(pendingSingleNpu.id, {
+          id: pendingSingleNpu.id,
+          npuId: pendingSingleNpu.id,
+          die: '0',
+          name: pendingSingleNpu.name,
+          util: m.util,
+          memoryUsed: hbmHasData ? m.hbmUsed : m.memoryUsed,
+          memoryTotal: hbmHasData ? m.hbmTotal : m.memoryTotal,
+          hbmUsed: m.hbmUsed,
+          hbmTotal: m.hbmTotal,
+        });
+        pendingSingleNpu = null;
+      }
+      continue;
+    }
+
+    if (isSingleNpuIdFormat && !secondToken) {
+      const name = (cols[2] || '').trim();
+      if (name && !/^\d+$/.test(name)) {
+        pendingSingleNpu = { id: firstToken, name };
+      }
+      continue;
+    }
 
     if (/^\d+$/.test(secondToken)) {
       if (isPhyIdFormat) {
@@ -184,4 +217,3 @@ function numOrNull(v) {
 }
 
 module.exports = { parseNpuSmi };
-
