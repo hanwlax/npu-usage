@@ -32,6 +32,8 @@ function tryParseJson(stdout) {
       memoryUsed: numOrNull(mem.used ?? mem.used_mb ?? mem.usedMiB),
       memoryTotal: numOrNull(mem.total ?? mem.total_mb ?? mem.totalMiB),
       util: numOrNull(it.util ?? it.utilization ?? it.aicore_util ?? it['Util-Gpu'] ?? it['util-gpu']),
+      processDir: it.processDir || it.process_dir || '',
+      processMemory: numOrNull(it.processMemory ?? it.process_memory ?? it.process_memory_mb),
     });
   }
   return npus.length ? { npus, raw: stdout } : null;
@@ -62,6 +64,8 @@ function tryParseUsages(stdout) {
 function parseTable(stdout) {
   const lines = stdout.split(/\r?\n/);
   const npuMap = new Map();
+  const processMap = new Map();
+  const processes = [];
   let pendingName = null;
   let pendingSingleNpu = null;
   let inProcessTable = false;
@@ -79,12 +83,16 @@ function parseTable(stdout) {
       inProcessTable = true;
       continue;
     }
-    if (inProcessTable) continue;
     if (/No running processes/i.test(line)) continue;
     if (/^\|\s*(NPU\s+Name|NPU\s+Chip|NPU\s+ID)/i.test(line)) continue;
 
     const cols = line.split('|').map(s => s.trim());
     if (cols.length < 3) continue;
+
+    if (inProcessTable) {
+      collectProcessRow(cols, processMap, processes, npuMap, { isPhyIdFormat, isSingleNpuIdFormat });
+      continue;
+    }
 
     const col1Tokens = (cols[1] || '').split(/\s+/).filter(Boolean);
     const firstToken = col1Tokens[0] || '';
@@ -159,8 +167,59 @@ function parseTable(stdout) {
   }
 
   const npus = Array.from(npuMap.values());
+  for (const npu of npus) {
+    const process = processMap.get(String(npu.id));
+    if (process) {
+      npu.processDir = process.dir;
+      npu.processMemory = process.memory;
+    }
+  }
   npus.sort((a, b) => Number(a.npuId) - Number(b.npuId) || Number(a.id) - Number(b.id));
-  return { npus, raw: stdout };
+  return { npus, raw: stdout, processes };
+}
+
+function collectProcessRow(cols, processMap, processes, npuMap, options) {
+  const firstCell = cols[1] || '';
+  const tokens = firstCell.split(/\s+/).filter(Boolean);
+  const firstToken = tokens[0] || '';
+  if (!/^\d+$/.test(firstToken)) return;
+
+  const secondToken = tokens[1] || '';
+  const npuKey = resolveProcessNpuKey(firstToken, secondToken, npuMap, options);
+  const pid = (cols[2] || '').trim();
+  const processName = (cols[3] || '').trim();
+  const processMemory = numOrNull(cols[4]);
+  const dir = extractProcessDirectory(processName);
+  if (!/^\d+$/.test(pid) || processMemory == null) return;
+
+  processes.push({ npuId: npuKey, pid, name: processName, memory: processMemory, dir });
+  if (!dir) return;
+
+  const current = processMap.get(npuKey);
+  if (!current || processMemory > current.memory) {
+    processMap.set(npuKey, { dir, memory: processMemory });
+  }
+}
+
+function resolveProcessNpuKey(firstToken, secondToken, npuMap, options) {
+  if (!options.isPhyIdFormat) return firstToken;
+  if (!/^\d+$/.test(secondToken)) return firstToken;
+
+  for (const [id, npu] of npuMap.entries()) {
+    if (String(npu.npuId) === firstToken && String(npu.die) === secondToken) return id;
+  }
+  return secondToken;
+}
+
+function extractProcessDirectory(value) {
+  if (!value) return '';
+  const pathMatch = String(value).match(/(?:^|\s)(\/[^\s'"|]+)/);
+  if (!pathMatch) return '';
+  const clean = pathMatch[1].replace(/[),;]+$/, '');
+  const parts = clean.split('/').filter(Boolean);
+  if (parts[0] === 'home' && parts.length >= 3) return '/' + parts.slice(0, 3).join('/');
+  if (parts.length <= 1) return clean;
+  return '/' + parts.slice(0, -1).join('/');
 }
 
 function extractChipRow(cols) {

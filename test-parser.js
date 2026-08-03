@@ -105,8 +105,9 @@ const ASCEND_25 = `+------------------------------------------------------------
 +------------------------------------------------------------------------------------+
 | NPU     Chip                | Process id   | Process name      | Process memory(MB) |
 +============================+==============+============================+=================+
-| 0     0                    | 3101668      |                   | 43767              |
-| 0     0                    | 3100667      |                   | 112                |
+| 0     0                    | 3101668      | /home/rjw/sglang-k3/python | 43767              |
+| 0     0                    | 3100667      | /home/lp/sglang/server.py | 112                |
+| 1     1                    | 3102668      | /home/lp/sglang/worker.py | 42100              |
 +------------------------------------------------------------------------------------+
 | No running processes found in NPU 1                                                   |
 `;
@@ -116,6 +117,8 @@ eq('25.5.1: die 0 npuId', npus25[0] && npus25[0].npuId, '0');
 eq('25.5.1: die 0 die', npus25[0] && npus25[0].die, '0');
 eq('25.5.1: die 0 hbm', npus25[0] && npus25[0].hbmUsed, 46904);
 eq('25.5.1: die 0 aicore', npus25[0] && npus25[0].util, 0);
+eq('25.5.1: die 0 process dir', npus25[0] && npus25[0].processDir, '/home/rjw/sglang-k3');
+eq('25.5.1: later die process dir', npus25[3] && npus25[3].processDir, '/home/lp/sglang');
 eq('25.5.1: die 0 name', npus25[0] && npus25[0].name, 'Ascend910');
 eq('25.5.1: die 4 hbm', npus25[4] && npus25[4].hbmUsed, 3120);
 eq('25.5.1: no process table leak', !npus25.some(n => /Process/.test(n.name || '')), true);
@@ -144,13 +147,16 @@ const ASCEND_25_6_SINGLE_DIE = `+-----------------------------------------------
 +---------------------------+---------------+----------------------------------------------------------------------+
 | NPU ID                    | Process id    | Process name       | Process memory(MB)    | Process id in container |
 +===========================+===============+======================================================================+
-| 6                         | 3621066       | VLLMWorker_TP      | 61140                 | NA                      |
+| 6                         | 3621066       | /home/lp/sglang/worker.py | 40000                 | NA                      |
+| 6                         | 3624823       | /home/rjw/sglang-k3/worker.py | 61140                 | NA                      |
+| 6                         | 3624824       | /home/rjw/sglang-k3/helper.py | 20000                 | NA                      |
 +===========================+===============+======================================================================+`;
 const { npus: npus256 } = parseNpuSmi(ASCEND_25_6_SINGLE_DIE);
 eq('25.6 single-die: count', npus256.length, 4);
 eq('25.6 single-die: npu 0 hbm', npus256[0] && npus256[0].hbmUsed, 6632);
 eq('25.6 single-die: npu 1 util', npus256[1] && npus256[1].util, 5);
 eq('25.6 single-die: npu 6 hbm', npus256[2] && npus256[2].hbmUsed, 66466);
+eq('25.6 single-die: npu 6 process dir', npus256[2] && npus256[2].processDir, '/home/rjw/sglang-k3');
 eq('25.6 single-die: no process table leak', !npus256.some(n => n.name === '3621066' || n.id === '3621066'), true);
 
 if (failed === 0) {

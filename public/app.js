@@ -160,6 +160,14 @@ function setCardCollapsed(card, collapsed, immediate = false) {
   }
 }
 
+function closeOpenMenus() {
+  $$('.menu-wrap.open').forEach(el => {
+    el.classList.remove('open');
+    const card = el.closest('.card');
+    if (card) card.classList.remove('menu-open');
+  });
+}
+
 function monitorColumnCount() {
   const width = grid.clientWidth || window.innerWidth || 0;
   if (width < 720) return 1;
@@ -277,6 +285,7 @@ function buildTile(npu, idx) {
       </div>
     </div>
     <div class="tile-metrics"><span class="tile-vram"></span><span class="tile-ai"></span></div>
+    <div class="tile-process"></div>
   `;
   updateTile(tile, npu);
   return tile;
@@ -288,6 +297,12 @@ function updateTile(tile, npu) {
   tile.querySelector('.tile-mem').textContent = `${fmtBytes(npu.memoryUsed)} / ${fmtBytes(npu.memoryTotal)}`;
   tile.querySelector('.tile-vram').textContent = memPct != null ? `${memPct.toFixed(0)}% VRAM` : '-- VRAM';
   tile.querySelector('.tile-ai').textContent = npu.util != null ? `AICORE ${Number(npu.util).toFixed(0)}%` : 'AICORE --';
+  const processEl = tile.querySelector('.tile-process');
+  if (processEl) {
+    processEl.textContent = npu.processDir || '';
+    processEl.title = npu.processDir || '';
+    processEl.classList.toggle('hidden', !npu.processDir);
+  }
   tile.classList.remove('low', 'mid', 'high');
   const cls = metricClass(memPct);
   if (cls) tile.classList.add(cls);
@@ -305,7 +320,8 @@ function updateHostUtilBar(card, npus) {
   updateHostSummary(card, npus);
 }
 function syncTiles(listEl, npus) {
-  const needsRebuild = listEl.childElementCount !== npus.length || Array.from(listEl.children).some(el => !el.classList.contains('npu-tile'));
+  const needsRebuild = listEl.childElementCount !== npus.length
+    || Array.from(listEl.children).some(el => !el.classList.contains('npu-tile') || !el.querySelector('.tile-process'));
   if (needsRebuild) {
     listEl.innerHTML = '';
     for (let i = 0; i < npus.length; i++) listEl.appendChild(buildTile(npus[i], i));
@@ -345,9 +361,15 @@ function renderCard(host) {
     if (menuWrap && moreBtn) {
       moreBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        menuWrap.classList.toggle('open');
+        const shouldOpen = !menuWrap.classList.contains('open');
+        closeOpenMenus();
+        menuWrap.classList.toggle('open', shouldOpen);
+        card.classList.toggle('menu-open', shouldOpen);
       });
-      card.querySelector('.action-menu').addEventListener('click', () => menuWrap.classList.remove('open'));
+      card.querySelector('.action-menu').addEventListener('click', () => {
+        menuWrap.classList.remove('open');
+        card.classList.remove('menu-open');
+      });
     }
     card.querySelector('.btn-collapse').addEventListener('click', () => {
       const collapsed = !card.classList.contains('collapsed');
@@ -769,11 +791,9 @@ function openDialog(host) {
   dlg.showModal();
 }
 
-document.addEventListener('click', () => {
-  $$('.menu-wrap.open').forEach(el => el.classList.remove('open'));
-});
+document.addEventListener('click', closeOpenMenus);
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') $$('.menu-wrap.open').forEach(el => el.classList.remove('open'));
+  if (e.key === 'Escape') closeOpenMenus();
 });
 
 $$('.tab').forEach(btn => btn.addEventListener('click', () => setActiveTab(btn.dataset.tab)));

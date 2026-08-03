@@ -197,7 +197,8 @@ class HostSession {
     const cmd = this.host.command || DEFAULT_NPU_CMD;
     try {
       const { stdout } = await this.exec(cmd);
-      const { npus, raw } = parseNpuSmi(stdout);
+      const { npus, raw, processes } = parseNpuSmi(stdout);
+      await this.enrichProcessDirs(npus, processes);
       const sample = { ts: Date.now(), npus, raw: this.host.showRaw ? raw : undefined };
       this.lastSample = sample;
       this.lastError = null;
@@ -214,6 +215,64 @@ class HostSession {
       this.onUpdate(this.host.id, { type: 'error', error: this.lastError });
     }
   }
+
+  async enrichProcessDirs(npus, processes) {
+    if (!Array.isArray(npus) || !Array.isArray(processes) || !processes.length) return;
+    const missing = processes.filter(p => p && p.pid && !p.dir);
+    let cwdByPid = new Map();
+    if (missing.length) {
+      try {
+        cwdByPid = await this.fetchProcessCwds(missing.map(p => p.pid));
+      } catch (_) {
+        cwdByPid = new Map();
+      }
+    }
+    const bestByNpu = new Map();
+
+    for (const process of processes) {
+      const rawDir = process.dir || cwdByPid.get(String(process.pid)) || '';
+      const dir = extractProcessDirectory(rawDir);
+      if (!dir) continue;
+      const key = String(process.npuId);
+      const current = bestByNpu.get(key);
+      if (!current || Number(process.memory) > current.memory) {
+        bestByNpu.set(key, { dir, memory: Number(process.memory) });
+      }
+    }
+
+    for (const npu of npus) {
+      const process = bestByNpu.get(String(npu.id));
+      if (process) {
+        npu.processDir = process.dir;
+        npu.processMemory = process.memory;
+      }
+    }
+  }
+
+  async fetchProcessCwds(pids) {
+    const uniquePids = [...new Set((pids || []).map(String).filter(pid => /^\d+$/.test(pid)))];
+    if (!uniquePids.length) return new Map();
+    const body = uniquePids
+      .map(pid => `d=$(readlink -f /proc/${pid}/cwd 2>/dev/null || true); [ -n "$d" ] && printf '${pid}\\t%s\\n' "$d"`)
+      .join('; ');
+    const { stdout } = await this.exec(body);
+    const result = new Map();
+    for (const line of stdout.split(/\r?\n/)) {
+      const [pid, dir] = line.split('\t');
+      if (/^\d+$/.test(pid || '') && dir) result.set(pid, dir.trim());
+    }
+    return result;
+  }
+}
+
+function extractProcessDirectory(value) {
+  if (!value) return '';
+  const clean = String(value).trim().replace(/[),;]+$/, '');
+  if (!clean.startsWith('/')) return '';
+  const parts = clean.split('/').filter(Boolean);
+  if (parts[0] === 'home' && parts.length >= 3) return '/' + parts.slice(0, 3).join('/');
+  if (parts.length <= 1) return clean;
+  return '/' + parts.slice(0, -1).join('/');
 }
 
 const app = express();

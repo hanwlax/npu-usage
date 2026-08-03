@@ -862,6 +862,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   min-width: 0;
   overflow: visible;
 }
+.card.menu-open {
+  z-index: 80;
+}
 .card-head {
   grid-template-columns: auto minmax(120px, 1fr) auto auto auto;
   gap: 10px;
@@ -985,12 +988,16 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .menu-wrap {
   position: relative;
+  z-index: 1;
+}
+.menu-wrap.open {
+  z-index: 90;
 }
 .action-menu {
   position: absolute;
   right: 0;
   top: calc(100% + 6px);
-  z-index: 30;
+  z-index: 100;
   min-width: 96px;
   display: none;
   flex-direction: column;
@@ -1178,17 +1185,28 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   flex-wrap: wrap;
 }
 .tile-vram,
-.tile-ai {
+.tile-ai,
+.tile-process {
   color: var(--text-dim);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
   font-variant-numeric: tabular-nums;
 }
+.tile-process {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+}
 .npu-tile.mid .tile-vram,
-.npu-tile.mid .tile-ai { color: var(--warn); }
+.npu-tile.mid .tile-ai,
+.npu-tile.mid .tile-process { color: var(--warn); }
 .npu-tile.high .tile-vram,
-.npu-tile.high .tile-ai { color: var(--err); }
+.npu-tile.high .tile-ai,
+.npu-tile.high .tile-process { color: var(--err); }
 
 /* Balanced multi-column host layout. */
 .grid,
