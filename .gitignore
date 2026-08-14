@@ -1,5 +1,6 @@
 node_modules/
 data/hosts.json
+data/proxies.json
 ssh-tunnel-debug.log
 
 .env

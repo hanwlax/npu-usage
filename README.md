@@ -10,6 +10,8 @@
 - 最近 **5 分钟** 利用率趋势曲线（Chart.js）
 - 可选显示 `npu-smi info` 原始输出，便于排查解析问题
 - 配置保存在本地 `data/hosts.json`
+- SSH 反向代理：同步 `~/.ssh/config` 中的 `*-proxy`，也可在页面添加自定义隧道
+- 代理隧道自动保活并在异常退出后退避重试，启动错误会保留在代理卡片中
 
 ## 快速开始
 
@@ -74,6 +76,12 @@ npm start
 
 保存后点 **测试** 验证连通性，没问题就 **开始** 监控。
 
+### SSH 代理隧道
+
+进入 **PROXY** 页面，可以直接启动 `.ssh/config` 中以 `-proxy` 结尾的 Host，也可以点击 **ADD TUNNEL** 填写机器地址、SSH 端口、本地服务端口、远端监听端口和用户名（默认 `root`）。自定义配置保存在 `data/proxies.json`。
+
+自定义隧道等价于 `ssh -N -R <远端端口>:127.0.0.1:<本地端口> <用户>@<机器>`。进程包含 SSH keepalive、连接超时和 `ExitOnForwardFailure`；异常退出后按指数退避自动重试，最多重试 6 次，手动停止会取消重试。如果远端端口被占用，SSH 返回的失败原因会显示在隧道卡片下方。
+
 ## 自定义命令
 
 默认执行 `npu-smi info`。如果你的版本输出格式不同，可在添加/编辑时把 `采集命令` 改为：
@@ -94,6 +102,11 @@ npm start
 | `POST`   | `/api/hosts/:id/start`   | 开始监控 |
 | `POST`   | `/api/hosts/:id/stop`    | 停止监控 |
 | `POST`   | `/api/hosts/:id/test`    | 跑 `uname -a` 测试连通性 |
+| `GET`    | `/api/proxies`           | 列出 SSH config 与自定义隧道及运行状态 |
+| `POST`   | `/api/proxies`           | 新增自定义反向代理隧道 |
+| `DELETE` | `/api/proxies/:id`       | 删除自定义隧道 |
+| `POST`   | `/api/proxies/:id/start` | 启动隧道并自动保活 |
+| `POST`   | `/api/proxies/:id/stop`  | 停止隧道并取消重试 |
 | `WS`     | `/ws`                    | 实时推送（消息: `subscribe` / `snapshot` / `sample` / `error`） |
 
 ## 项目结构
@@ -107,7 +120,8 @@ npus-usage/
 │   ├── style.css
 │   └── app.js
 └── data/
-    └── hosts.json     # 运行时生成，保存主机配置
+    ├── hosts.json     # 运行时生成，保存主机配置
+    └── proxies.json   # 运行时生成，保存自定义代理配置
 ```
 
 ## 注意事项

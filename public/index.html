@@ -57,9 +57,10 @@
       <div class="proxy-head">
         <div>
           <h2>REVERSE PROXY</h2>
-          <p>SSH remote forward tunnels from local .ssh/config.</p>
+          <p>Managed SSH tunnels · config aliases + custom endpoints · auto recovery.</p>
         </div>
         <div class="proxy-head-actions">
+          <button id="btn-proxy-add" type="button">ADD TUNNEL</button>
           <button id="btn-proxy-start-all" class="primary" type="button">START ALL</button>
           <button id="btn-proxy-refresh" type="button">REFRESH</button>
         </div>
@@ -102,6 +103,34 @@
       <button type="submit" class="primary">SAVE</button>
     </div>
     <pre id="dlg-log" class="log hidden"></pre>
+  </form>
+</dialog>
+
+<dialog id="dlg-proxy" class="dlg">
+  <form id="form-proxy" class="dlg-form" method="dialog">
+    <div class="dlg-kicker">CUSTOM ENDPOINT</div>
+    <h2>ADD REVERSE TUNNEL</h2>
+    <p class="dlg-intro">Expose a local service on a remote machine. The tunnel is kept alive and retried automatically.</p>
+    <label>Name (optional)<input name="name" placeholder="training-api" /></label>
+    <div class="row">
+      <label class="grow">Machine IP / Host<input name="host" required placeholder="10.0.0.5" autocomplete="off" /></label>
+      <label class="port">SSH Port<input name="sshPort" type="number" min="1" max="65535" value="22" required /></label>
+    </div>
+    <div class="row proxy-port-row">
+      <label class="grow">Username<input name="username" required value="root" placeholder="root" autocomplete="username" /></label>
+      <label class="port">Local Port<input name="localPort" type="number" min="1" max="65535" placeholder="8787" required /></label>
+      <label class="port">Remote Port<input name="remotePort" type="number" min="1" max="65535" placeholder="18787" required /></label>
+    </div>
+    <div class="proxy-route-preview" aria-live="polite">
+      <span>LOCAL</span><strong id="proxy-route-local">127.0.0.1:—</strong>
+      <i>→</i>
+      <span>REMOTE</span><strong id="proxy-route-remote">—:—</strong>
+    </div>
+    <div class="dlg-actions">
+      <button type="button" id="btn-proxy-cancel">CANCEL</button>
+      <button type="submit" class="primary">ADD &amp; SAVE</button>
+    </div>
+    <pre id="proxy-dlg-log" class="log hidden"></pre>
   </form>
 </dialog>
 

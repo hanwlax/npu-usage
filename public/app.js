@@ -11,6 +11,10 @@ const addHostButton = $('#btn-add');
 const proxyList = $('#proxy-list');
 const proxyRefreshButton = $('#btn-proxy-refresh');
 const proxyStartAllButton = $('#btn-proxy-start-all');
+const proxyAddButton = $('#btn-proxy-add');
+const proxyDialog = $('#dlg-proxy');
+const proxyForm = $('#form-proxy');
+const proxyDialogLog = $('#proxy-dlg-log');
 
 const dlg = $('#dlg-host');
 const form = $('#form-host');
@@ -28,6 +32,7 @@ const HOST_ORDER_KEY = 'npu-host-order';
 let heightRaf = 0;
 let draggingCard = null;
 let proxyLayoutRaf = 0;
+let proxyFetchInFlight = false;
 let monitorLayoutRaf = 0;
 
 function scheduleRelayout() {
@@ -515,8 +520,8 @@ function layoutProxyMasonry() {
   if (!cards.length) return;
   const cols = ensureProxyColumns(proxyColumnCount());
   const ordered = cards.sort((a, b) => {
-    const ai = proxies.findIndex(p => p.alias === a.dataset.proxy);
-    const bi = proxies.findIndex(p => p.alias === b.dataset.proxy);
+    const ai = proxies.findIndex(p => p.id === a.dataset.proxy);
+    const bi = proxies.findIndex(p => p.id === b.dataset.proxy);
     return ai - bi;
   });
   for (const col of cols) col.innerHTML = '';
@@ -537,68 +542,114 @@ function scheduleProxyLayout() {
   });
 }
 
+function proxyCardById(id) {
+  return $$('.proxy-card', proxyList).find(card => card.dataset.proxy === id) || null;
+}
+
 function renderProxy(proxy) {
-  let card = proxyList.querySelector(`[data-proxy="${proxy.alias}"]`);
+  let card = proxyCardById(proxy.id);
+  let created = false;
   if (!card) {
     const cols = ensureProxyColumns(proxyColumnCount());
     card = document.createElement('section');
     card.className = 'card proxy-card';
-    card.dataset.proxy = proxy.alias;
+    card.dataset.proxy = proxy.id;
+    created = true;
     card.innerHTML = `
       <header class="card-head proxy-card-head">
         <div class="card-title proxy-title">
           <span class="dot"></span>
           <div class="title-stack">
-            <h3></h3>
+            <div class="proxy-name-line"><h3></h3><span class="proxy-source"></span></div>
             <span class="addr proxy-addr"></span>
           </div>
         </div>
         <div class="card-actions proxy-actions">
-          <button class="btn-proxy-start primary" type="button" title="Start" aria-label="Start proxy tunnel">S</button>
-          <button class="btn-proxy-stop" type="button" title="End" aria-label="End proxy tunnel">E</button>
+          <button class="btn-proxy-start primary" type="button" title="Start" aria-label="Start proxy tunnel">▶</button>
+          <button class="btn-proxy-stop" type="button" title="Stop" aria-label="Stop proxy tunnel">■</button>
+          <button class="btn-proxy-delete" type="button" title="Delete" aria-label="Delete custom proxy tunnel">×</button>
         </div>
       </header>
       <div class="card-status proxy-status"></div>
       <div class="proxy-body">
+        <div class="proxy-route"></div>
         <pre class="proxy-command"></pre>
         <pre class="proxy-error"></pre>
       </div>
     `;
-    $('.btn-proxy-start', card).addEventListener('click', () => toggleProxy(proxy.alias, true));
-    $('.btn-proxy-stop', card).addEventListener('click', () => toggleProxy(proxy.alias, false));
+    $('.btn-proxy-start', card).addEventListener('click', () => toggleProxy(card.dataset.proxy, true));
+    $('.btn-proxy-stop', card).addEventListener('click', () => toggleProxy(card.dataset.proxy, false));
+    $('.btn-proxy-delete', card).addEventListener('click', () => deleteProxy(card.dataset.proxy));
     cols[0].appendChild(card);
   }
 
-  const running = !!proxy.running;
-  const hasError = !!proxy.lastError && !running;
+  const running = proxy.state === 'running';
+  const active = !!proxy.desired;
+  const hasError = !!proxy.lastError && ['starting', 'retrying', 'failed'].includes(proxy.state);
   card.classList.toggle('running', running);
+  card.classList.toggle('starting', proxy.state === 'starting');
+  card.classList.toggle('retrying', proxy.state === 'retrying');
   card.classList.toggle('error', hasError);
   const dot = $('.dot', card);
   dot.classList.toggle('running', running);
+  dot.classList.toggle('starting', proxy.state === 'starting' || proxy.state === 'retrying');
   dot.classList.toggle('error', hasError);
-  $('h3', card).textContent = proxy.alias;
-  $('.proxy-addr', card).textContent = proxy.command || `ssh -N ${proxy.alias}`;
-  $('.proxy-status', card).textContent = running
-    ? `LIVE · PID ${proxy.pid || '--'} · ${fmtTime(proxy.startedAt)}`
-    : `STOPPED · ${fmtTime(proxy.stoppedAt)}`;
-  $('.proxy-command', card).textContent = proxy.command || `ssh -N ${proxy.alias}`;
+  $('h3', card).textContent = proxy.name || proxy.id;
+  $('.proxy-source', card).textContent = proxy.source === 'custom' ? 'CUSTOM' : 'SSH CONFIG';
+  $('.proxy-addr', card).textContent = proxy.source === 'custom'
+    ? `${proxy.username}@${proxy.host}:${proxy.sshPort}`
+    : proxy.alias;
+  const status = $('.proxy-status', card);
+  if (proxy.state === 'running') {
+    status.textContent = `LIVE · PID ${proxy.pid || '--'} · ${fmtTime(proxy.startedAt)}`;
+  } else if (proxy.state === 'starting') {
+    status.textContent = `CONNECTING · ATTEMPT ${proxy.retryCount + 1}`;
+  } else if (proxy.state === 'retrying') {
+    const seconds = Math.max(0, Math.ceil((proxy.nextRetryAt - Date.now()) / 1000));
+    status.textContent = `RETRY ${proxy.retryCount} · IN ${seconds}s`;
+  } else if (proxy.state === 'failed') {
+    status.textContent = `FAILED · RETRIED ${proxy.retryCount} TIMES`;
+  } else {
+    status.textContent = `STOPPED · ${fmtTime(proxy.stoppedAt)}`;
+  }
+  $('.proxy-route', card).textContent = proxy.source === 'custom'
+    ? `127.0.0.1:${proxy.localPort}  →  ${proxy.host}:${proxy.remotePort}`
+    : 'Forwarding rules managed by ~/.ssh/config';
+  $('.proxy-command', card).textContent = proxy.command || '';
   $('.proxy-error', card).textContent = proxy.lastError || '';
-  $('.btn-proxy-start', card).disabled = running;
-  $('.btn-proxy-stop', card).disabled = !running;
-  scheduleProxyLayout();
+  $('.btn-proxy-start', card).disabled = active;
+  $('.btn-proxy-stop', card).disabled = !active;
+  const deleteButton = $('.btn-proxy-delete', card);
+  deleteButton.classList.toggle('hidden', proxy.source !== 'custom');
+  deleteButton.disabled = proxy.source !== 'custom' || active;
+  return created;
 }
 
 async function fetchProxies() {
-  if (!proxyList) return;
+  if (!proxyList || proxyFetchInFlight) return;
+  proxyFetchInFlight = true;
   try {
     const res = await fetch('/api/proxies');
     proxies = await readJsonResponse(res, 'Proxy status');
-    const valid = new Set(proxies.map(p => p.alias));
+    const valid = new Set(proxies.map(p => p.id));
+    let layoutChanged = false;
     for (const card of $$('.proxy-card', proxyList)) {
-      if (!valid.has(card.dataset.proxy)) card.remove();
+      if (!valid.has(card.dataset.proxy)) {
+        card.remove();
+        layoutChanged = true;
+      }
     }
-    for (const proxy of proxies) renderProxy(proxy);
-    scheduleProxyLayout();
+    if (!proxies.length) {
+      proxyList.innerHTML = '<div class="empty proxy-empty"><div class="empty-title">NO TUNNELS</div><div class="empty-sub">Add a custom tunnel or define a *-proxy host in ~/.ssh/config.</div></div>';
+      return;
+    }
+    const emptyState = $('.proxy-empty', proxyList);
+    if (emptyState) {
+      emptyState.remove();
+      layoutChanged = true;
+    }
+    for (const proxy of proxies) layoutChanged = renderProxy(proxy) || layoutChanged;
+    if (layoutChanged) scheduleProxyLayout();
   } catch (err) {
     proxyList.innerHTML = '';
     const failed = document.createElement('div');
@@ -611,33 +662,37 @@ async function fetchProxies() {
     sub.textContent = err.message;
     failed.append(title, sub);
     proxyList.appendChild(failed);
+  } finally {
+    proxyFetchInFlight = false;
   }
 }
 
-async function toggleProxy(alias, start) {
-  const card = proxyList.querySelector(`[data-proxy="${alias}"]`);
+async function toggleProxy(id, start) {
+  const card = proxyCardById(id);
   const buttons = card ? $$('button', card) : [];
   for (const btn of buttons) btn.disabled = true;
   let updated = false;
   try {
-    const res = await fetch(`/api/proxies/${encodeURIComponent(alias)}/${start ? 'start' : 'stop'}`, { method: 'POST' });
+    const res = await fetch(`/api/proxies/${encodeURIComponent(id)}/${start ? 'start' : 'stop'}`, { method: 'POST' });
     const data = await readJsonResponse(res, 'Proxy request');
     renderProxy(data);
     updated = true;
   } catch (err) {
-    alert('Proxy request failed: ' + err.message);
+    if (card) {
+      card.classList.add('error');
+      $('.proxy-error', card).textContent = 'Request failed: ' + err.message;
+    }
   } finally {
     if (!updated) {
       for (const btn of buttons) btn.disabled = false;
     }
-    scheduleProxyLayout();
   }
 }
 
 async function startAllProxies() {
   if (!proxyList || !proxyStartAllButton) return;
   if (!proxies.length) await fetchProxies();
-  const targets = proxies.filter(proxy => !proxy.running);
+  const targets = proxies.filter(proxy => !proxy.desired);
   if (!targets.length) return;
 
   const originalText = proxyStartAllButton.textContent;
@@ -649,14 +704,14 @@ async function startAllProxies() {
     for (let i = 0; i < targets.length; i++) {
       const proxy = targets[i];
       proxyStartAllButton.textContent = `STARTING ${i + 1}/${targets.length}`;
-      const res = await fetch(`/api/proxies/${encodeURIComponent(proxy.alias)}/start`, { method: 'POST' });
+      const res = await fetch(`/api/proxies/${encodeURIComponent(proxy.id)}/start`, { method: 'POST' });
       try {
         const data = await readJsonResponse(res, 'Proxy request');
         renderProxy(data);
-        const index = proxies.findIndex(item => item.alias === data.alias);
+        const index = proxies.findIndex(item => item.id === data.id);
         if (index >= 0) proxies[index] = data;
       } catch (err) {
-        failed.push(`${proxy.alias}: ${err.message}`);
+        failed.push(`${proxy.name || proxy.id}: ${err.message}`);
       }
     }
   } finally {
@@ -668,6 +723,56 @@ async function startAllProxies() {
 
   if (failed.length) {
     alert('Start all completed with failures:\n' + failed.join('\n'));
+  }
+}
+
+function updateProxyRoutePreview() {
+  if (!proxyForm) return;
+  const host = proxyForm.host.value.trim() || '—';
+  const localPort = proxyForm.localPort.value || '—';
+  const remotePort = proxyForm.remotePort.value || '—';
+  $('#proxy-route-local').textContent = `127.0.0.1:${localPort}`;
+  $('#proxy-route-remote').textContent = `${host}:${remotePort}`;
+}
+
+function openProxyDialog() {
+  proxyForm.reset();
+  proxyForm.username.value = 'root';
+  proxyForm.sshPort.value = '22';
+  proxyDialogLog.classList.add('hidden');
+  proxyDialogLog.textContent = '';
+  updateProxyRoutePreview();
+  proxyDialog.showModal();
+}
+
+async function createProxy(event) {
+  event.preventDefault();
+  const submit = $('button[type="submit"]', proxyForm);
+  submit.disabled = true;
+  proxyDialogLog.classList.add('hidden');
+  const body = {
+    name: proxyForm.name.value.trim(),
+    host: proxyForm.host.value.trim(),
+    username: proxyForm.username.value.trim() || 'root',
+    sshPort: Number(proxyForm.sshPort.value) || 22,
+    localPort: Number(proxyForm.localPort.value),
+    remotePort: Number(proxyForm.remotePort.value),
+  };
+  try {
+    const res = await fetch('/api/proxies', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    await readJsonResponse(res, 'Add tunnel');
+    proxyDialog.close();
+    await fetchProxies();
+  } catch (err) {
+    proxyDialogLog.classList.remove('hidden', 'ok');
+    proxyDialogLog.classList.add('err');
+    proxyDialogLog.textContent = 'Could not add tunnel: ' + err.message;
+  } finally {
+    submit.disabled = false;
   }
 }
 
@@ -688,6 +793,23 @@ async function fetchHosts() {
   updateMeta();
   subscribeAll();
   scheduleRelayout();
+}
+
+async function deleteProxy(id) {
+  const proxy = proxies.find(item => item.id === id);
+  if (!proxy || proxy.source !== 'custom') return;
+  if (!confirm(`Delete tunnel "${proxy.name}"?`)) return;
+  try {
+    const res = await fetch(`/api/proxies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await readJsonResponse(res, 'Delete tunnel');
+    await fetchProxies();
+  } catch (err) {
+    const card = proxyCardById(id);
+    if (card) {
+      card.classList.add('error');
+      $('.proxy-error', card).textContent = 'Delete failed: ' + err.message;
+    }
+  }
 }
 
 function setEmpty() {
@@ -799,6 +921,12 @@ document.addEventListener('keydown', (e) => {
 $$('.tab').forEach(btn => btn.addEventListener('click', () => setActiveTab(btn.dataset.tab)));
 if (proxyRefreshButton) proxyRefreshButton.addEventListener('click', fetchProxies);
 if (proxyStartAllButton) proxyStartAllButton.addEventListener('click', startAllProxies);
+if (proxyAddButton) proxyAddButton.addEventListener('click', openProxyDialog);
+if (proxyForm) {
+  proxyForm.addEventListener('input', updateProxyRoutePreview);
+  proxyForm.addEventListener('submit', createProxy);
+}
+$('#btn-proxy-cancel')?.addEventListener('click', () => proxyDialog.close());
 addHostButton.addEventListener('click', () => openDialog(null));
 $('#btn-cancel').addEventListener('click', () => dlg.close());
 
@@ -885,6 +1013,9 @@ function collectForm() {
       updateMeta();
     }).catch(() => {});
   }, 15000);
+  setInterval(() => {
+    if ($('#view-proxy')?.classList.contains('active')) fetchProxies();
+  }, 2000);
   grid.addEventListener('dragover', handleGridDragOver);
   grid.addEventListener('drop', (e) => {
     if (!draggingCard) return;

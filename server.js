@@ -14,10 +14,14 @@ const { parseNpuSmi } = require('./parser.js');
 
 const DATA_DIR = path.join(__dirname, 'data');
 const HOSTS_FILE = process.env.HOSTS_FILE || path.join(DATA_DIR, 'hosts.json');
+const PROXIES_FILE = process.env.PROXIES_FILE || path.join(DATA_DIR, 'proxies.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const PORT = Number(process.env.PORT) || 8787;
 const HISTORY_WINDOW_MS = 5 * 60 * 1000;
 const SSH_CONFIG_FILE = process.env.SSH_CONFIG_FILE || path.join(os.homedir(), '.ssh', 'config');
+const PROXY_RETRY_BASE_MS = Math.max(250, Number(process.env.PROXY_RETRY_BASE_MS) || 1000);
+const PROXY_RETRY_MAX_MS = Math.max(PROXY_RETRY_BASE_MS, Number(process.env.PROXY_RETRY_MAX_MS) || 30000);
+const PROXY_MAX_RETRIES = 6;
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -37,6 +41,22 @@ async function saveHosts(hosts) {
   const tmp = HOSTS_FILE + '.tmp';
   await fsp.writeFile(tmp, JSON.stringify(hosts, null, 2), 'utf8');
   await fsp.rename(tmp, HOSTS_FILE);
+}
+
+function loadCustomProxies() {
+  try {
+    const raw = fs.readFileSync(PROXIES_FILE, 'utf8');
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+async function saveCustomProxies(proxies) {
+  const tmp = PROXIES_FILE + '.tmp';
+  await fsp.writeFile(tmp, JSON.stringify(proxies, null, 2), 'utf8');
+  await fsp.rename(tmp, PROXIES_FILE);
 }
 
 function loadProxyHosts() {
@@ -74,6 +94,45 @@ function loadProxyHosts() {
     }
   }
   return aliases;
+}
+
+function loadProxyDefinitions() {
+  const configProxies = loadProxyHosts().map(alias => ({
+    id: alias,
+    name: alias,
+    source: 'ssh-config',
+    alias,
+  }));
+  return [...configProxies, ...loadCustomProxies().map(proxy => ({ ...proxy, source: 'custom' }))];
+}
+
+function getProxyDefinition(id) {
+  return loadProxyDefinitions().find(proxy => proxy.id === id) || null;
+}
+
+function validPort(value) {
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null;
+}
+
+function normalizeCustomProxy(body) {
+  const host = String(body.host || '').trim();
+  const username = String(body.username || 'root').trim() || 'root';
+  const sshPort = validPort(body.sshPort || 22);
+  const localPort = validPort(body.localPort);
+  const remotePort = validPort(body.remotePort);
+  if (!host || /\s/.test(host)) throw new Error('machine IP / host is required and cannot contain spaces');
+  if (!/^[A-Za-z0-9._-]+$/.test(username)) throw new Error('username contains unsupported characters');
+  if (!sshPort || !localPort || !remotePort) throw new Error('SSH, local and remote ports must be between 1 and 65535');
+  return {
+    id: `custom-${genId()}`,
+    name: String(body.name || '').trim() || `${host}:${remotePort}`,
+    host,
+    username,
+    sshPort,
+    localPort,
+    remotePort,
+  };
 }
 
 function genId() {
@@ -302,91 +361,180 @@ function removeSession(id) {
   }
 }
 
-function proxyStatus(alias) {
-  const s = proxySessions.get(alias);
-  if (!s) {
-    return {
-      alias,
-      command: `ssh -N ${alias}`,
-      running: false,
-      pid: null,
-      startedAt: null,
-      stoppedAt: null,
-      exitCode: null,
-      lastError: null,
-    };
-  }
+function proxyArgs(proxy) {
+  const keepalive = [
+    '-N',
+    '-o', 'BatchMode=yes',
+    '-o', 'ExitOnForwardFailure=yes',
+    '-o', 'TCPKeepAlive=yes',
+    '-o', 'ConnectTimeout=8',
+    '-o', 'ServerAliveInterval=15',
+    '-o', 'ServerAliveCountMax=3',
+  ];
+  if (proxy.source === 'ssh-config') return [...keepalive, proxy.alias];
+  return [
+    ...keepalive,
+    '-p', String(proxy.sshPort),
+    '-R', `${proxy.remotePort}:127.0.0.1:${proxy.localPort}`,
+    `${proxy.username}@${proxy.host}`,
+  ];
+}
+
+function proxyCommand(proxy) {
+  return `ssh ${proxyArgs(proxy).join(' ')}`;
+}
+
+function proxyStatus(id) {
+  const proxy = getProxyDefinition(id) || proxySessions.get(id)?.proxy;
+  if (!proxy) return null;
+  const s = proxySessions.get(id);
   return {
-    alias,
-    command: `ssh -N ${alias}`,
-    running: !!s.running,
-    pid: s.child?.pid || null,
-    startedAt: s.startedAt,
-    stoppedAt: s.stoppedAt,
-    exitCode: s.exitCode,
-    lastError: s.lastError,
+    ...proxy,
+    command: proxyCommand(proxy),
+    state: s?.state || 'stopped',
+    desired: !!s?.desired,
+    running: s?.state === 'running' || s?.state === 'starting',
+    pid: s?.child?.pid || null,
+    startedAt: s?.startedAt || null,
+    stoppedAt: s?.stoppedAt || null,
+    exitCode: s?.exitCode ?? null,
+    lastError: s?.lastError || null,
+    retryCount: s?.retryCount || 0,
+    nextRetryAt: s?.nextRetryAt || null,
   };
 }
 
-function requireProxyAlias(alias, res) {
-  if (!loadProxyHosts().includes(alias)) {
-    res.status(404).json({ error: 'unknown proxy host' });
+function requireProxy(id, res) {
+  const proxy = getProxyDefinition(id);
+  if (!proxy) {
+    res.status(404).json({ error: 'unknown proxy tunnel' });
     return null;
   }
-  return alias;
+  return proxy;
 }
 
-function startProxy(alias) {
-  const cur = proxySessions.get(alias);
-  if (cur?.running && cur.child && !cur.child.killed) return proxyStatus(alias);
+function clearProxyTimers(session) {
+  if (session.retryTimer) clearTimeout(session.retryTimer);
+  if (session.readyTimer) clearTimeout(session.readyTimer);
+  session.retryTimer = null;
+  session.readyTimer = null;
+  session.nextRetryAt = null;
+}
 
-  const session = {
-    child: null,
-    running: true,
-    startedAt: Date.now(),
-    stoppedAt: null,
-    exitCode: null,
-    lastError: null,
-  };
-  const child = spawn('ssh', ['-N', alias], {
+function scheduleProxyRetry(session) {
+  if (!session.desired) return;
+  if (session.retryCount >= PROXY_MAX_RETRIES) {
+    session.desired = false;
+    session.state = 'failed';
+    session.nextRetryAt = null;
+    session.retryTimer = null;
+    return;
+  }
+  session.retryCount += 1;
+  const delay = Math.min(PROXY_RETRY_MAX_MS, PROXY_RETRY_BASE_MS * (2 ** Math.min(session.retryCount - 1, 5)));
+  session.state = 'retrying';
+  session.nextRetryAt = Date.now() + delay;
+  session.retryTimer = setTimeout(() => spawnProxyAttempt(session), delay);
+  session.retryTimer.unref?.();
+}
+
+function spawnProxyAttempt(session) {
+  if (!session.desired) return;
+  clearProxyTimers(session);
+  session.state = 'starting';
+  session.startedAt = Date.now();
+  session.stoppedAt = null;
+  session.exitCode = null;
+  if (session.retryCount === 0) session.lastError = null;
+  session.stderr = '';
+
+  const child = spawn('ssh', proxyArgs(session.proxy), {
     cwd: __dirname,
     windowsHide: true,
     stdio: ['ignore', 'ignore', 'pipe'],
   });
   session.child = child;
-  proxySessions.set(alias, session);
+
+  session.readyTimer = setTimeout(() => {
+    if (session.desired && session.child === child && !child.killed) {
+      session.state = 'running';
+      session.lastError = null;
+      session.readyTimer = null;
+    }
+  }, 1000);
+  session.readyTimer.unref?.();
 
   child.stderr.on('data', (data) => {
-    const text = data.toString('utf8').trim();
-    if (text) session.lastError = text.slice(-800);
+    session.stderr = (session.stderr + data.toString('utf8')).slice(-4000);
+    const text = session.stderr.trim();
+    if (text) session.lastError = text;
   });
   child.on('error', (err) => {
-    session.running = false;
-    session.stoppedAt = Date.now();
     session.lastError = err.message || String(err);
   });
-  child.on('exit', (code, signal) => {
-    session.running = false;
+  child.on('close', (code, signal) => {
+    if (session.child !== child) return;
+    if (session.readyTimer) clearTimeout(session.readyTimer);
+    session.readyTimer = null;
+    session.child = null;
     session.stoppedAt = Date.now();
     session.exitCode = code;
-    if (signal && !session.lastError) session.lastError = `terminated by ${signal}`;
+    if (signal && !session.lastError && session.desired) session.lastError = `ssh terminated by ${signal}`;
     if (code && !session.lastError) session.lastError = `ssh exited with code ${code}`;
+    if (session.desired) {
+      if (!session.lastError) session.lastError = 'SSH tunnel closed unexpectedly';
+      scheduleProxyRetry(session);
+    } else {
+      session.state = 'stopped';
+    }
   });
-
-  return proxyStatus(alias);
 }
 
-function stopProxy(alias) {
-  const s = proxySessions.get(alias);
-  if (!s || !s.child || !s.running) return proxyStatus(alias);
-  s.running = false;
-  s.stoppedAt = Date.now();
-  try {
-    s.child.kill();
-  } catch (err) {
-    s.lastError = err.message || String(err);
+function startProxy(proxy) {
+  let session = proxySessions.get(proxy.id);
+  if (!session) {
+    session = {
+      proxy,
+      child: null,
+      desired: false,
+      state: 'stopped',
+      startedAt: null,
+      stoppedAt: null,
+      exitCode: null,
+      lastError: null,
+      retryCount: 0,
+      nextRetryAt: null,
+      retryTimer: null,
+      readyTimer: null,
+      stderr: '',
+    };
+    proxySessions.set(proxy.id, session);
   }
-  return proxyStatus(alias);
+  if (session.desired) return proxyStatus(proxy.id);
+  session.proxy = proxy;
+  session.desired = true;
+  session.retryCount = 0;
+  spawnProxyAttempt(session);
+  return proxyStatus(proxy.id);
+}
+
+function stopProxy(id) {
+  const session = proxySessions.get(id);
+  if (!session) return proxyStatus(id);
+  session.desired = false;
+  session.state = 'stopped';
+  session.stoppedAt = Date.now();
+  clearProxyTimers(session);
+  if (session.child) {
+    const child = session.child;
+    session.child = null;
+    try {
+      child.kill();
+    } catch (err) {
+      session.lastError = err.message || String(err);
+    }
+  }
+  return proxyStatus(id);
 }
 
 function stopAllProxies() {
@@ -398,19 +546,58 @@ app.get('/api/hosts', (req, res) => {
 });
 
 app.get('/api/proxies', (req, res) => {
-  res.json(loadProxyHosts().map(proxyStatus));
+  const proxies = loadProxyDefinitions();
+  const validIds = new Set(proxies.map(proxy => proxy.id));
+  for (const id of proxySessions.keys()) {
+    if (!validIds.has(id)) {
+      stopProxy(id);
+      proxySessions.delete(id);
+    }
+  }
+  res.json(proxies.map(proxy => proxyStatus(proxy.id)));
 });
 
-app.post('/api/proxies/:alias/start', (req, res) => {
-  const alias = requireProxyAlias(req.params.alias, res);
-  if (!alias) return;
-  res.json(startProxy(alias));
+app.post('/api/proxies', async (req, res) => {
+  let proxy;
+  try {
+    proxy = normalizeCustomProxy(req.body || {});
+  } catch (err) {
+    return res.status(400).json({ error: err.message || String(err) });
+  }
+  try {
+    const proxies = loadCustomProxies();
+    proxies.push(proxy);
+    await saveCustomProxies(proxies);
+    res.status(201).json(proxyStatus(proxy.id));
+  } catch (err) {
+    res.status(500).json({ error: 'unable to save proxy: ' + (err.message || String(err)) });
+  }
 });
 
-app.post('/api/proxies/:alias/stop', (req, res) => {
-  const alias = requireProxyAlias(req.params.alias, res);
-  if (!alias) return;
-  res.json(stopProxy(alias));
+app.post('/api/proxies/:id/start', (req, res) => {
+  const proxy = requireProxy(req.params.id, res);
+  if (!proxy) return;
+  res.json(startProxy(proxy));
+});
+
+app.post('/api/proxies/:id/stop', (req, res) => {
+  const proxy = requireProxy(req.params.id, res);
+  if (!proxy) return;
+  res.json(stopProxy(proxy.id));
+});
+
+app.delete('/api/proxies/:id', async (req, res) => {
+  const proxy = requireProxy(req.params.id, res);
+  if (!proxy) return;
+  if (proxy.source !== 'custom') return res.status(400).json({ error: 'SSH config tunnels cannot be deleted here' });
+  try {
+    await saveCustomProxies(loadCustomProxies().filter(item => item.id !== proxy.id));
+    stopProxy(proxy.id);
+    proxySessions.delete(proxy.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'unable to delete proxy: ' + (err.message || String(err)) });
+  }
 });
 
 app.post('/api/hosts', async (req, res) => {

@@ -1715,3 +1715,199 @@ button.primary:hover,
     gap: 18px;
   }
 }
+
+/* ====== Managed proxy tunnels ====== */
+.proxy-name-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.proxy-name-line h3 {
+  min-width: 0;
+}
+.proxy-source {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid rgba(138, 151, 168, 0.3);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.proxy-card.running .proxy-source {
+  border-color: rgba(74, 222, 128, 0.3);
+  color: var(--ok);
+}
+.proxy-card.starting .proxy-status,
+.proxy-card.retrying .proxy-status {
+  color: var(--warn);
+}
+.dot.starting {
+  background: var(--warn);
+  box-shadow: 0 0 0 5px rgba(217, 164, 65, 0.12);
+  animation: proxy-pulse 1.2s ease-in-out infinite;
+}
+.dot.starting.error {
+  background: var(--err);
+}
+@keyframes proxy-pulse {
+  50% { opacity: 0.42; transform: scale(0.78); }
+}
+.proxy-route {
+  padding: 11px 12px;
+  background: #15181e;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.proxy-card .proxy-command {
+  color: #788390;
+  font-size: 10px;
+}
+.proxy-card .proxy-error {
+  display: block;
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+  opacity: 0;
+  border-top-width: 0;
+  transition: max-height 180ms ease, padding 180ms ease, opacity 140ms ease, border-width 180ms ease;
+}
+.proxy-card.error .proxy-error {
+  max-height: 240px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  overflow: auto;
+  opacity: 1;
+  border-top-width: 1px;
+}
+.proxy-actions .btn-proxy-delete:hover {
+  background: var(--err);
+  border-color: var(--err);
+  color: var(--bg);
+}
+.proxy-empty {
+  grid-column: 1 / -1;
+  width: auto;
+  margin: 0;
+}
+
+#form-proxy {
+  padding: 22px 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+#form-proxy h2 {
+  margin: -2px 0 0;
+  font-family: var(--display);
+  font-size: 22px;
+  color: var(--text);
+}
+#form-proxy .dlg-kicker {
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+#form-proxy .dlg-intro {
+  margin: 0 0 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.55;
+}
+#form-proxy label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--text-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+#form-proxy label.grow { flex: 1 1 180px; }
+#form-proxy label.port { width: 104px; flex: 0 0 104px; }
+#form-proxy .row { display: flex; gap: 10px; }
+#form-proxy input {
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  background: #111419;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--mono);
+}
+#form-proxy input:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+.proxy-route-preview {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #15181e;
+  overflow: hidden;
+}
+.proxy-route-preview span {
+  color: var(--text-dim);
+  font-size: 8px;
+  letter-spacing: 0.1em;
+}
+.proxy-route-preview strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.proxy-route-preview i {
+  color: var(--accent);
+  font-style: normal;
+}
+
+@media (max-width: 720px) {
+  .topbar {
+    height: auto;
+    min-height: 0;
+    padding: 12px 14px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .brand { padding: 0; }
+  .brand-title { font-size: 21px; }
+  .brand-sub { font-size: 8px; }
+  .tabs {
+    width: 100%;
+    margin: 0;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .actions {
+    width: 100%;
+    min-height: 38px;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .actions .meta {
+    flex: 1 1 0;
+    padding: 0;
+    border: 0;
+  }
+  #form-proxy .row { flex-wrap: wrap; }
+  #form-proxy .proxy-port-row label.grow { flex-basis: 100%; }
+  #form-proxy label.port { width: calc(50% - 5px); flex-basis: calc(50% - 5px); }
+  .proxy-route-preview { grid-template-columns: auto 1fr; }
+  .proxy-route-preview i { display: none; }
+}
